@@ -7,6 +7,23 @@ app.use(cors());
 
 mongoose.connect('mongodb://localhost:27017/places', { useNewUrlParser: true, useUnifiedTopology: true });
 
+const openingHourSchema = new mongoose.Schema({
+    day: { type: Number, required: true },
+    hour: { type: Number, required: true },
+    minute: { type: Number, required: true }
+});
+
+const periodSchema = new mongoose.Schema({
+    open: { type: openingHourSchema, required: true },
+    close: { type: openingHourSchema, required: true }
+});
+
+const regularOpeningHoursSchema = new mongoose.Schema({
+    openNow: { type: Boolean, required: true },
+    periods: { type: [periodSchema], required: true },
+    weekdayDescriptions: { type: [String], required: true }
+});
+
 const placeSchema = new mongoose.Schema({
     id: String,
     location_name: {
@@ -22,37 +39,45 @@ const placeSchema = new mongoose.Schema({
     location: {
         latitude: Number,
         longitude: Number
-    }
+    },
+    openingHours: regularOpeningHoursSchema,
 });
 
 const Place = mongoose.model('Place', placeSchema, 'place_info');
 
 app.get('/places', async (req, res) => {
     let query = {};
+    let checkOpenNow = false;
 
     if (req.query) {
         const primary_type = req.query.primary_type;
-        if (primary_type){
+        if (primary_type) {
             if (Array.isArray(primary_type) && primary_type.length > 0) {
                 query['primary_type.text'] = { $in: primary_type };
-            } else if(!Array.isArray(primary_type)) {
+            } else if (!Array.isArray(primary_type)) {
                 query['primary_type.text'] = { $in: [primary_type] };
             }
             console.log(query['primary_type.text'])
         }
+
+        if (req.query.isOpenNow === 'true') {
+            checkOpenNow = true;
+        }
     }
 
     let places = await Place.find(query);
+
+    // Add isOpenNow to each place
+    places = places.map(place => {
+        const isOpen = isOpenNow(place.openingHours);
+        return { ...place.toObject(), isOpenNow: isOpen };
+    });
+
+    if (checkOpenNow) {
+        places = places.filter(place => place.isOpenNow);
+    }
+    
     console.log("Length of places :" + places.length)
-    // places = [
-    //     {
-    //         name: "abc",
-    //         id: "ChIJUaH7BAKNGGARyFZObTEQXj4",
-    //         latitude: 35.6710614,
-    //         longitude: 139.7075722,
-    //         url: "https://maps.google.com/?cid=4494047282635626184"
-    //     }
-    // ];
     res.json(places);
 });
 
@@ -65,3 +90,28 @@ app.get('/primary_types', async (req, res) => {
 app.listen(3001, () => {
     console.log('Server is running on port 3001');
 });
+
+const isOpenNow = (openingHours) => {
+    const now = new Date();
+    const currentDay = now.getDay(); // 0: Sunday, 1: Monday, ..., 6: Saturday
+    const currentHour = now.getHours();
+    const currentMinute = now.getMinutes();
+
+    // Check each period to see if the current time falls within any open period
+    if (!openingHours.periods)
+        return false;
+    
+    for (const period of openingHours.periods) {
+        if (period.open.day === currentDay) {
+            const openTime = period.open.hour * 60 + period.open.minute;
+            const closeTime = period.close.hour * 60 + period.close.minute;
+            const currentTime = currentHour * 60 + currentMinute;
+
+            if (currentTime >= openTime && currentTime < closeTime) {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}

@@ -12,7 +12,7 @@ def get_place_id(location_name, api_key):
     url = "https://places.googleapis.com/v1/places:searchText"
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-FieldMask": "places.displayName,places.primaryType,places.primaryTypeDisplayName,places.shortFormattedAddress,places.googleMapsUri,places.id,places.location",
+        "X-Goog-FieldMask": "places.displayName,places.primaryType,places.primaryTypeDisplayName,places.shortFormattedAddress,places.googleMapsUri,places.id,places.location,places.regularOpeningHours",
         "X-Goog-Api-Key": api_key,
     }
     payload = {
@@ -29,7 +29,8 @@ def get_place_id(location_name, api_key):
                 "location_name": results[0].get('displayName'),
                 "primary_type": results[0].get('primaryTypeDisplayName'),
                 "url": results[0].get('googleMapsUri'),
-                "location": results[0].get('location')
+                "location": results[0].get('location'),
+                "openingHours": results[0].get('regularOpeningHours')
             }
 
     print(response.json())
