@@ -14,7 +14,10 @@ const placeSchema = new mongoose.Schema({
         languageCode: String
     },
     address: String,
-    primary_type: String, // 修正: genre -> primary_type
+    primary_type: {
+        text: String,
+        languageCode: String
+    },
     url: String,
     location: {
         latitude: Number,
@@ -25,15 +28,22 @@ const placeSchema = new mongoose.Schema({
 const Place = mongoose.model('Place', placeSchema, 'place_info');
 
 app.get('/places', async (req, res) => {
-    const { primary_type } = req.query; // 修正: genre -> primary_type
     let query = {};
 
-    if (primary_type) {
-        query.primary_type = primary_type;
+    if (req.query) {
+        const primary_type = req.query.primary_type;
+        if (primary_type){
+            if (Array.isArray(primary_type) && primary_type.length > 0) {
+                query['primary_type.text'] = { $in: primary_type };
+            } else if(!Array.isArray(primary_type)) {
+                query['primary_type.text'] = { $in: [primary_type] };
+            }
+            console.log(query['primary_type.text'])
+        }
     }
 
     let places = await Place.find(query);
-    console.log(places)
+    console.log("Length of places :" + places.length)
     // places = [
     //     {
     //         name: "abc",
@@ -44,6 +54,12 @@ app.get('/places', async (req, res) => {
     //     }
     // ];
     res.json(places);
+});
+
+app.get('/primary_types', async (req, res) => {
+    const primaryTypes = await Place.distinct('primary_type.text');
+    console.log(primaryTypes)
+    res.json(primaryTypes);
 });
 
 app.listen(3001, () => {

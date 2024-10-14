@@ -4,7 +4,7 @@ import { GoogleMap, LoadScript, Marker, InfoWindow } from '@react-google-maps/ap
 const MapComponent = ({ places }) => {
     const mapContainerStyle = {
         height: '100vh',
-        width: '100%'
+        width: '100vw'
     };
 
     const [position, setPosition] = useState({
@@ -34,6 +34,9 @@ const MapComponent = ({ places }) => {
                 mapContainerStyle={mapContainerStyle}
                 center={position} // Use defaultCenter instead of center
                 zoom={13}
+                options={{
+                    gestureHandling: 'greedy' // フリック操作を可能にする設定
+                }}
                 onLoad={handleMapLoad}
                 onDragEnd={handleCenter}
             >
