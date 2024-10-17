@@ -70,6 +70,9 @@ app.get('/places', async (req, res) => {
     // Add isOpenNow to each place
     places = places.map(place => {
         const isOpen = isOpenNow(place.openingHours);
+        if (place.openingHours === null) {
+            console.log("openingHours has not been assigned : " + place.location_name.text)
+        }
         return { ...place.toObject(), isOpenNow: isOpen };
     });
 
@@ -98,8 +101,9 @@ const isOpenNow = (openingHours) => {
     const currentMinute = now.getMinutes();
 
     // Check each period to see if the current time falls within any open period
-    if (!openingHours.periods)
+    if ( openingHours === null || openingHours.periods === null ) {
         return false;
+    }
     
     for (const period of openingHours.periods) {
         if (period.open.day === currentDay) {
