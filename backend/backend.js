@@ -1,6 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const { OAuth2Client } = require('google-auth-library');
 
 const app = express();
 app.use(cors());
@@ -45,7 +46,31 @@ const placeSchema = new mongoose.Schema({
 
 const Place = mongoose.model('Place', placeSchema, 'place_info');
 
-app.get('/places', async (req, res) => {
+const client = new OAuth2Client(process.env.REACT_APP_GOOGLE_CLIENT_ID);
+
+const verifyToken = async (req, res, next) => {
+    const authHeader = req.headers['authorization'];
+    if (!authHeader) {
+        return res.status(401).send('Unauthorized');
+    }
+    const token = authHeader.split(' ')[1]; // Bearer プレフィックスを取り除く
+    if (!token) {
+        return res.status(401).send('Unauthorized');
+    }
+    try {
+        const ticket = await client.verifyIdToken({
+            idToken: token,
+            audience: process.env.REACT_APP_GOOGLE_CLIENT_ID,
+        });
+        req.user = ticket.getPayload();
+        next();
+    } catch (error) {
+        console.error(error);
+        res.status(401).send('Unauthorized');
+    }
+};
+
+app.get('/places', verifyToken, async (req, res) => {
     let query = {};
     let checkOpenNow = false;
 
@@ -79,12 +104,12 @@ app.get('/places', async (req, res) => {
     if (checkOpenNow) {
         places = places.filter(place => place.isOpenNow);
     }
-    
+
     console.log("Length of places :" + places.length)
     res.json(places);
 });
 
-app.get('/primary_types', async (req, res) => {
+app.get('/primary_types', verifyToken, async (req, res) => {
     const primaryTypes = await Place.distinct('primary_type.text');
     console.log(primaryTypes)
     res.json(primaryTypes);
@@ -101,10 +126,10 @@ const isOpenNow = (openingHours) => {
     const currentMinute = now.getMinutes();
 
     // Check each period to see if the current time falls within any open period
-    if ( openingHours === null || openingHours.periods === null ) {
+    if (openingHours === null || openingHours.periods === null) {
         return false;
     }
-    
+
     for (const period of openingHours.periods) {
         if (period.open.day === currentDay) {
             const openTime = period.open.hour * 60 + period.open.minute;
