@@ -9,13 +9,15 @@
     #   depends_on:
     #     - backend
 
-    # backend:
-    #   build:
-    #     context: ./backend
-    #   ports:
-    #     - "3001:3001"
-    #   depends_on:
-    #     - mongo
+    backend:
+      image: backend:latest
+      ports:
+        - "3001:3001"
+      environment:
+        GOOGLE_MAPS_API_KEY: "hogehoge"
+        MONGODB_ADDRESS: "mongo:27017"
+      depends_on:
+        - mongo
 
     mongo:
       image: mongo:4.2

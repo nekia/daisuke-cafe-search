@@ -12,8 +12,10 @@ const App = () => {
     const [user, setUser] = useState(null);
     const [token, setToken] = useState(null);
     const allowedEmails = ['nekiaiken@gmail.com', 'nekiaiyaiken@gmail.com', 'kumatsushi@gmail.com'];  // 許可されたメールアドレスのリスト
+    const backendEndpoint = process.env.REACT_APP_BACKEND_ENDPOINT;
 
     useEffect(() => {
+        console.log(`backendEndpoint: ${backendEndpoint}`)
         if (token) {
             fetchPlaces([], false);
             fetchPrimaryTypes();
@@ -25,7 +27,7 @@ const App = () => {
         if (openNow) {
             query += '&isOpenNow=true';
         }
-        fetch(`http://localhost:3001/places?${query}`, {
+        fetch(`${backendEndpoint}/places?${query}`, {
             headers: {
                 'Authorization': `Bearer ${token}`
             }
@@ -35,7 +37,7 @@ const App = () => {
     };
 
     const fetchPrimaryTypes = () => {
-        fetch('http://localhost:3001/primary_types', {
+        fetch(`${backendEndpoint}/primary_types`, {
             headers: {
                 'Authorization': `Bearer ${token}`
             }

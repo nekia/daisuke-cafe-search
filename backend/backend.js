@@ -2,11 +2,27 @@ const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const { OAuth2Client } = require('google-auth-library');
+require('dotenv').config();
 
 const app = express();
 app.use(cors());
 
-mongoose.connect('mongodb://localhost:27017/places', { useNewUrlParser: true, useUnifiedTopology: true });
+const mongodbConnStr = process.env.MONGODB_CONNECTION_STRING
+
+console.log(`================== Hello World ====================`);
+
+console.log(`mongodbConnStr : ${mongodbConnStr}`);
+mongoose.connect(mongodbConnStr, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true
+    // serverApi: { version: '1', strict: true, deprecationErrors: true }
+}).then(() => {
+    console.log('MongoDB connected successfully');
+}).catch(err => {
+    console.error('MongoDB connection error:', err);
+});
+
+const db = mongoose.connection.useDb('places');
 
 const openingHourSchema = new mongoose.Schema({
     day: { type: Number, required: true },
@@ -44,7 +60,7 @@ const placeSchema = new mongoose.Schema({
     openingHours: regularOpeningHoursSchema,
 });
 
-const Place = mongoose.model('Place', placeSchema, 'place_info');
+const Place = db.model('Place', placeSchema, 'place_info');
 
 const client = new OAuth2Client(process.env.REACT_APP_GOOGLE_CLIENT_ID);
 
@@ -131,7 +147,7 @@ const isOpenNow = (openingHours) => {
     }
 
     for (const period of openingHours.periods) {
-        if (period.open.day === currentDay) {
+        if (period.open.day === currentDay && period.open && period.close) {
             const openTime = period.open.hour * 60 + period.open.minute;
             const closeTime = period.close.hour * 60 + period.close.minute;
             const currentTime = currentHour * 60 + currentMinute;
