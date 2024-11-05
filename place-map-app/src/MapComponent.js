@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { GoogleMap, LoadScript, Marker, InfoWindow } from '@react-google-maps/api';
 
-const MapComponent = ({ places }) => {
+const MapComponent = ({ places, categoryColors }) => {
     const mapContainerStyle = {
         height: '100vh',
         width: '100vw'
@@ -46,6 +46,9 @@ const MapComponent = ({ places }) => {
                         position={{ lat: place.location.latitude, lng: place.location.longitude }}
                         onClick={() => {
                             setSelected(place);
+                        }}
+                        icon={{
+                            url: `http://maps.google.com/mapfiles/ms/icons/${categoryColors[place.category] || 'red'}-dot.png`
                         }}
                     />
                 ))}

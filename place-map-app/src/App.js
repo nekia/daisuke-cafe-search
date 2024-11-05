@@ -3,29 +3,45 @@ import Select from 'react-select';
 import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google';
 import { jwtDecode } from 'jwt-decode';  // 名前付きエクスポートとしてインポート
 import MapComponent from './MapComponent';
+import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+// import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFnsV3';
+import jaLocale from 'date-fns/locale/ja';
+import TextField from '@mui/material/TextField';
 
 const App = () => {
     const [places, setPlaces] = useState([]);
     const [primaryTypes, setPrimaryTypes] = useState([]);
     const [filter, setFilter] = useState([]);
-    const [showOpenNow, setShowOpenNow] = useState(false);
+    const [category, setCategory] = useState(['1', '2']);
+    const [selectedDateTime, setSelectedDateTime] = useState(new Date());
+    // const [showOpenNow, setShowOpenNow] = useState(false);
     const [user, setUser] = useState(null);
     const [token, setToken] = useState(null);
     const allowedEmails = ['nekiaiken@gmail.com', 'nekiaiyaiken@gmail.com', 'kumatsushi@gmail.com'];  // 許可されたメールアドレスのリスト
     const backendEndpoint = process.env.REACT_APP_BACKEND_ENDPOINT;
 
+    const categoryColors = {
+        '1': 'red',
+        '2': 'blue',
+        // 他のカテゴリと色を追加
+    };
+
     useEffect(() => {
         console.log(`backendEndpoint: ${backendEndpoint}`)
         if (token) {
-            fetchPlaces([], false);
+            fetchPlaces(filter, category, selectedDateTime);
             fetchPrimaryTypes();
         }
     }, [token]);
 
-    const fetchPlaces = (types, openNow) => {
+    const fetchPlaces = (types, category, dateTime) => {
         let query = types.map(type => `primary_type=${type}`).join('&');
-        if (openNow) {
-            query += '&isOpenNow=true';
+        query += '&'
+        query += category.map(cat => `category=${cat}`).join('&');
+        if (dateTime) {
+            query += `&dateTime=${dateTime.toISOString()}`;
         }
         fetch(`${backendEndpoint}/places?${query}`, {
             headers: {
@@ -49,7 +65,7 @@ const App = () => {
     const handleFilterChange = (selectedOptions) => {
         const selectedValues = selectedOptions ? selectedOptions.map(option => option.value) : [];
         setFilter(selectedValues);
-        fetchPlaces(selectedValues, showOpenNow);
+        fetchPlaces(selectedValues, category, selectedDateTime);
 
         // const query = selectedValues.map(type => `primary_type=${type}`).join('&');
         // fetch(`http://localhost:3001/places?${query}`)
@@ -57,10 +73,20 @@ const App = () => {
         //     .then(data => setPlaces(data));
     };
 
-    const handleShowOpenNowChange = (event) => {
-        const isChecked = event.target.checked;
-        setShowOpenNow(isChecked);
-        fetchPlaces(filter, isChecked);
+    const handleCategoryChange = (selectedOptions) => {
+        const selectedValues = selectedOptions ? selectedOptions.map(option => option.value) : [];
+        setCategory(selectedValues);
+        fetchPlaces(filter, selectedValues, selectedDateTime);
+
+        // const query = selectedValues.map(type => `primary_type=${type}`).join('&');
+        // fetch(`http://localhost:3001/places?${query}`)
+        //     .then(response => response.json())
+        //     .then(data => setPlaces(data));
+    };
+
+    const handleDateTimeChange = (date) => {
+        setSelectedDateTime(date);
+        fetchPlaces(filter, category, date);
     };
 
     const handleLoginSuccess = (response) => {
@@ -108,14 +134,19 @@ const App = () => {
                             onChange={handleFilterChange}
                             placeholder="Select types..."
                         />
-                        <label style={{ marginLeft: '10px' }}>
-                            <input
-                                type="checkbox"
-                                checked={showOpenNow}
-                                onChange={handleShowOpenNowChange}
+                        <LocalizationProvider dateAdapter={AdapterDateFns} locale={jaLocale}>
+                            <DateTimePicker
+                                value={selectedDateTime}
+                                onChange={handleDateTimeChange}
+                                renderInput={(params) => <TextField {...params} style={{ marginLeft: '10px' }} />}
                             />
-                            現在営業中
-                        </label>
+                        </LocalizationProvider>
+                        <Select
+                            isMulti
+                            options={[{ value: 1, label: '店内OK' }, { value: 2, label: '外席OK' }]}
+                            onChange={handleCategoryChange}
+                            placeholder="Select category..."
+                        />
                     </div>
                     <div>
                         {user ? (
@@ -132,7 +163,7 @@ const App = () => {
                         )}
                     </div>
                 </nav>
-                <MapComponent places={places} />
+                <MapComponent places={places} categoryColors={categoryColors} />
             </div>
         </GoogleOAuthProvider>
     );

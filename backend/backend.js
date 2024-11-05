@@ -9,8 +9,6 @@ app.use(cors());
 
 const mongodbConnStr = process.env.MONGODB_CONNECTION_STRING
 
-console.log(`================== Hello World ====================`);
-
 console.log(`mongodbConnStr : ${mongodbConnStr}`);
 mongoose.connect(mongodbConnStr, {
     useNewUrlParser: true,
@@ -58,6 +56,7 @@ const placeSchema = new mongoose.Schema({
         longitude: Number
     },
     openingHours: regularOpeningHoursSchema,
+    category: Number
 });
 
 const Place = db.model('Place', placeSchema, 'place_info');
@@ -89,6 +88,7 @@ const verifyToken = async (req, res, next) => {
 app.get('/places', verifyToken, async (req, res) => {
     let query = {};
     let checkOpenNow = false;
+    let specificDateTime = null;
 
     if (req.query) {
         const primary_type = req.query.primary_type;
@@ -101,8 +101,18 @@ app.get('/places', verifyToken, async (req, res) => {
             console.log(query['primary_type.text'])
         }
 
-        if (req.query.isOpenNow === 'true') {
-            checkOpenNow = true;
+        const category = req.query.category;
+        if (category) {
+            if (Array.isArray(category) && category.length > 0) {
+                query['category'] = { $in: category };
+            } else if (!Array.isArray(category)) {
+                query['category'] = { $in: [category] };
+            }
+            console.log(query.category)
+        }
+
+        if (req.query.dateTime) {
+            specificDateTime = new Date(req.query.dateTime);
         }
     }
 
@@ -110,7 +120,7 @@ app.get('/places', verifyToken, async (req, res) => {
 
     // Add isOpenNow to each place
     places = places.map(place => {
-        const isOpen = isOpenNow(place.openingHours);
+        const isOpen = isOpenNow(place.openingHours, specificDateTime);
         if (place.openingHours === null) {
             console.log("openingHours has not been assigned : " + place.location_name.text)
         }
@@ -135,28 +145,24 @@ app.listen(3001, () => {
     console.log('Server is running on port 3001');
 });
 
-const isOpenNow = (openingHours) => {
-    const now = new Date();
+const isOpenNow = (openingHours, specificDateTime) => {
+    const now = specificDateTime || new Date();
     const currentDay = now.getDay(); // 0: Sunday, 1: Monday, ..., 6: Saturday
     const currentHour = now.getHours();
     const currentMinute = now.getMinutes();
-
-    // Check each period to see if the current time falls within any open period
+    // Check each period to see if the specified time falls within any open period
     if (openingHours === null || openingHours.periods === null) {
         return false;
     }
-
     for (const period of openingHours.periods) {
         if (period.open.day === currentDay && period.open && period.close) {
             const openTime = period.open.hour * 60 + period.open.minute;
             const closeTime = period.close.hour * 60 + period.close.minute;
             const currentTime = currentHour * 60 + currentMinute;
-
             if (currentTime >= openTime && currentTime < closeTime) {
                 return true;
             }
         }
     }
-
     return false;
-}
+};
