@@ -9,6 +9,8 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFnsV3';
 import jaLocale from 'date-fns/locale/ja';
 import TextField from '@mui/material/TextField';
+import Checkbox from '@mui/material/Checkbox';
+import Button from '@mui/material/Button';
 
 const App = () => {
     const [places, setPlaces] = useState([]);
@@ -16,6 +18,7 @@ const App = () => {
     const [filter, setFilter] = useState([]);
     const [category, setCategory] = useState(['1', '2']);
     const [selectedDateTime, setSelectedDateTime] = useState(new Date());
+    const [isDateTimeFilterEnabled, setIsDateTimeFilterEnabled] = useState(true);
     // const [showOpenNow, setShowOpenNow] = useState(false);
     const [user, setUser] = useState(null);
     const [token, setToken] = useState(null);
@@ -31,7 +34,7 @@ const App = () => {
     useEffect(() => {
         console.log(`backendEndpoint: ${backendEndpoint}`)
         if (token) {
-            fetchPlaces(filter, category, selectedDateTime);
+            fetchPlaces(filter, category, isDateTimeFilterEnabled ? selectedDateTime : null);
             fetchPrimaryTypes();
         }
     }, [token]);
@@ -65,7 +68,7 @@ const App = () => {
     const handleFilterChange = (selectedOptions) => {
         const selectedValues = selectedOptions ? selectedOptions.map(option => option.value) : [];
         setFilter(selectedValues);
-        fetchPlaces(selectedValues, category, selectedDateTime);
+        fetchPlaces(selectedValues, category, isDateTimeFilterEnabled ? selectedDateTime : null);
 
         // const query = selectedValues.map(type => `primary_type=${type}`).join('&');
         // fetch(`http://localhost:3001/places?${query}`)
@@ -76,7 +79,7 @@ const App = () => {
     const handleCategoryChange = (selectedOptions) => {
         const selectedValues = selectedOptions ? selectedOptions.map(option => option.value) : [];
         setCategory(selectedValues);
-        fetchPlaces(filter, selectedValues, selectedDateTime);
+        fetchPlaces(filter, selectedValues, isDateTimeFilterEnabled ? selectedDateTime : null);
 
         // const query = selectedValues.map(type => `primary_type=${type}`).join('&');
         // fetch(`http://localhost:3001/places?${query}`)
@@ -86,7 +89,7 @@ const App = () => {
 
     const handleDateTimeChange = (date) => {
         setSelectedDateTime(date);
-        fetchPlaces(filter, category, date);
+        fetchPlaces(filter, category, isDateTimeFilterEnabled ? date : null);
     };
 
     const handleLoginSuccess = (response) => {
@@ -107,6 +110,23 @@ const App = () => {
     const handleLogout = () => {
         setUser(null);
         setToken(null);
+    };
+
+    const handleDateTimeFilterToggle = () => {
+        setIsDateTimeFilterEnabled(!isDateTimeFilterEnabled);
+        if (!isDateTimeFilterEnabled) {
+            fetchPlaces(filter, category, selectedDateTime);
+        } else {
+            fetchPlaces(filter, category, null);
+        }
+    };
+    
+    const handleResetDateTime = () => {
+        const now = new Date();
+        setSelectedDateTime(now);
+        if (isDateTimeFilterEnabled) {
+            fetchPlaces(filter, category, now);
+        }
     };
 
     if (!user) {
@@ -138,9 +158,16 @@ const App = () => {
                             <DateTimePicker
                                 value={selectedDateTime}
                                 onChange={handleDateTimeChange}
+                                disabled={!isDateTimeFilterEnabled}
                                 renderInput={(params) => <TextField {...params} style={{ marginLeft: '10px' }} />}
                             />
                         </LocalizationProvider>
+                        <Checkbox
+                            checked={isDateTimeFilterEnabled}
+                            onChange={handleDateTimeFilterToggle}
+                            style={{ marginLeft: '10px' }}
+                        />
+                        <Button onClick={handleResetDateTime} style={{ marginLeft: '10px' }}>Reset to Now</Button>
                         <Select
                             isMulti
                             options={[{ value: 1, label: '店内OK' }, { value: 2, label: '外席OK' }]}

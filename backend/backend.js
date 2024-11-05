@@ -87,7 +87,7 @@ const verifyToken = async (req, res, next) => {
 
 app.get('/places', verifyToken, async (req, res) => {
     let query = {};
-    let checkOpenNow = false;
+    let checkOpenDate = false;
     let specificDateTime = null;
 
     if (req.query) {
@@ -113,6 +113,7 @@ app.get('/places', verifyToken, async (req, res) => {
 
         if (req.query.dateTime) {
             specificDateTime = new Date(req.query.dateTime);
+            checkOpenDate = true;
         }
     }
 
@@ -127,7 +128,7 @@ app.get('/places', verifyToken, async (req, res) => {
         return { ...place.toObject(), isOpenNow: isOpen };
     });
 
-    if (checkOpenNow) {
+    if (checkOpenDate) {
         places = places.filter(place => place.isOpenNow);
     }
 
