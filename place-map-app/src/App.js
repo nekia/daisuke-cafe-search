@@ -11,6 +11,7 @@ import jaLocale from 'date-fns/locale/ja';
 import TextField from '@mui/material/TextField';
 import Checkbox from '@mui/material/Checkbox';
 import Button from '@mui/material/Button';
+import FormControlLabel from '@mui/material/FormControlLabel';
 
 const App = () => {
     const [places, setPlaces] = useState([]);
@@ -30,6 +31,22 @@ const App = () => {
         '2': 'blue',
         // 他のカテゴリと色を追加
     };
+
+    useEffect(() => {
+        const storedToken = localStorage.getItem('authToken');
+        if (storedToken) {
+            const decodedToken = jwtDecode(storedToken);
+            const currentTime = Date.now() / 1000; // 現在の時刻を秒単位で取得
+            console.log(`Expired after ${decodedToken.exp - currentTime} secs`)
+            console.log(`now : ${new Date().toString()}`);
+            if (decodedToken.exp > currentTime && allowedEmails.includes(decodedToken.email)) {
+                setUser(decodedToken);
+                setToken(storedToken);
+            } else {
+                handleLogout();
+            }
+        }
+    }, []);
 
     useEffect(() => {
         console.log(`backendEndpoint: ${backendEndpoint}`)
@@ -97,6 +114,7 @@ const App = () => {
         if (allowedEmails.includes(decodedToken.email)) {
             setUser(decodedToken);
             setToken(response.credential);
+            localStorage.setItem('authToken', response.credential); // トークンをローカルストレージに保存
         } else {
             alert('このアカウントではログインできません。');
             handleLogout();
@@ -110,8 +128,9 @@ const App = () => {
     const handleLogout = () => {
         setUser(null);
         setToken(null);
+        localStorage.removeItem('authToken'); // ローカルストレージからトークンを削除
     };
-
+    
     const handleDateTimeFilterToggle = () => {
         setIsDateTimeFilterEnabled(!isDateTimeFilterEnabled);
         if (!isDateTimeFilterEnabled) {
@@ -153,32 +172,39 @@ const App = () => {
                             options={primaryTypes}
                             onChange={handleFilterChange}
                             placeholder="Select types..."
+                            styles={{ container: (provided) => ({ ...provided, height: '40px', marginRight: '10px' }) }}
+                        />
+                        <Select
+                            isMulti
+                            options={[{ value: 1, label: '店内OK' }, { value: 2, label: '外席OK' }]}
+                            onChange={handleCategoryChange}
+                            placeholder="Select category..."
+                            styles={{ container: (provided) => ({ ...provided, height: '40px', marginRight: '10px' }) }}
+                        />
+                        <FormControlLabel
+                            control={
+                                <Checkbox
+                                    checked={isDateTimeFilterEnabled}
+                                    onChange={handleDateTimeFilterToggle}
+                                />
+                            }
+                            label="営業中"
+                            style={{ marginLeft: '0px' }}
                         />
                         <LocalizationProvider dateAdapter={AdapterDateFns} locale={jaLocale}>
                             <DateTimePicker
                                 value={selectedDateTime}
                                 onChange={handleDateTimeChange}
                                 disabled={!isDateTimeFilterEnabled}
-                                renderInput={(params) => <TextField {...params} style={{ marginLeft: '10px' }} />}
+                                renderInput={(params) => <TextField {...params} style={{ marginLeft: '20px', height: '40px' }} />}
                             />
                         </LocalizationProvider>
-                        <Checkbox
-                            checked={isDateTimeFilterEnabled}
-                            onChange={handleDateTimeFilterToggle}
-                            style={{ marginLeft: '10px' }}
-                        />
-                        <Button onClick={handleResetDateTime} style={{ marginLeft: '10px' }}>Reset to Now</Button>
-                        <Select
-                            isMulti
-                            options={[{ value: 1, label: '店内OK' }, { value: 2, label: '外席OK' }]}
-                            onChange={handleCategoryChange}
-                            placeholder="Select category..."
-                        />
+                        <Button onClick={handleResetDateTime} style={{ marginLeft: '0px', height: '40px' }}>Now</Button>
                     </div>
                     <div>
                         {user ? (
                             <div>
-                                Welcome, {user.name}
+                                {user.name}
                                 <button onClick={handleLogout} style={{ marginLeft: '10px' }}>Logout</button>
                             </div>
                         ) : (

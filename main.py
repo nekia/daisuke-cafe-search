@@ -9,7 +9,7 @@ import csv
 
 load_dotenv()
 
-def get_place_id(location_name, api_key):
+def get_place_id(location_name, cat_num, api_key):
     url = "https://places.googleapis.com/v1/places:searchText"
     headers = {
         "Content-Type": "application/json",
@@ -32,7 +32,7 @@ def get_place_id(location_name, api_key):
                 "url": results[0].get('googleMapsUri'),
                 "location": results[0].get('location'),
                 "openingHours": results[0].get('currentOpeningHours'),
-                "category": 2
+                "category": cat_num
             }
 
     print(response.json())
@@ -45,7 +45,11 @@ db = client.places
 collection = db.place_info
 
 # CSVファイルの読み込み
-csv_file = '犬外席OK、散歩途中テイクアウトOK飲食店2.csv'
+# csv_file = '犬外席OK、散歩途中テイクアウトOK飲食店2.csv'
+# category = 2
+
+csv_file = '犬店内（インナーテラス含む）OK飲食店.csv'
+category = 1
 df = pd.read_csv(csv_file)
 
 # Google APIキー
@@ -64,7 +68,7 @@ for index, row in df.iterrows():
     # location_name = unquote(row['タイトル'])
     location_name = row['タイトル']
     comment = row['メモ']
-    place_info = get_place_id(location_name, api_key)
+    place_info = get_place_id(location_name, category, api_key)
     if place_info:
         print(f"Retrieved location info: {place_info}")
         # MongoDBにデータを挿入（既存IDがあれば更新、なければ挿入）

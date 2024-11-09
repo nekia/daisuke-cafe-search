@@ -10,6 +10,7 @@ app.use(cors());
 const mongodbConnStr = process.env.MONGODB_CONNECTION_STRING
 
 console.log(`mongodbConnStr : ${mongodbConnStr}`);
+console.log(`now : ${new Date().toString()}`);
 mongoose.connect(mongodbConnStr, {
     useNewUrlParser: true,
     useUnifiedTopology: true
