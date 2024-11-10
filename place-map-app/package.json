@@ -24,7 +24,7 @@
   },
   "scripts": {
     "start": "craco start",
-    "build": "GENERATE_SOURCEMAP=false react-scripts build",
+    "build": "GENERATE_SOURCEMAP=false react-app-rewired build",
     "test": "craco test",
     "eject": "react-app-rewired eject"
   },
@@ -47,7 +47,6 @@
     ]
   },
   "devDependencies": {
-    "@craco/craco": "^7.1.0",
     "react-app-rewired": "^2.2.1",
     "webpack-obfuscator": "^3.5.1"
   }
