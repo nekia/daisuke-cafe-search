@@ -12,6 +12,15 @@ import TextField from '@mui/material/TextField';
 import Checkbox from '@mui/material/Checkbox';
 import Button from '@mui/material/Button';
 import FormControlLabel from '@mui/material/FormControlLabel';
+import Dialog from '@mui/material/Dialog';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogContent from '@mui/material/DialogContent';
+import DialogActions from '@mui/material/DialogActions';
+import List from '@mui/material/List';
+import ListItem from '@mui/material/ListItem';
+import ListItemButton from '@mui/material/ListItemButton';
+import ListItemText from '@mui/material/ListItemText';
+import ListItemIcon from '@mui/material/ListItemIcon';
 
 const App = () => {
     const [places, setPlaces] = useState([]);
@@ -23,6 +32,7 @@ const App = () => {
     // const [showOpenNow, setShowOpenNow] = useState(false);
     const [user, setUser] = useState(null);
     const [token, setToken] = useState(null);
+    const [isTypeDialogOpen, setIsTypeDialogOpen] = useState(false);
     const allowedEmails = ['nekiaiken@gmail.com', 'nekiaiyaiken@gmail.com', 'kumatsushi@gmail.com'];  // 許可されたメールアドレスのリスト
     const backendEndpoint = process.env.REACT_APP_BACKEND_ENDPOINT;
 
@@ -148,6 +158,22 @@ const App = () => {
         }
     };
 
+    const handleTypeDialogOpen = () => {
+        setIsTypeDialogOpen(true);
+    };
+
+    const handleTypeDialogClose = () => {
+        setIsTypeDialogOpen(false);
+    };
+
+    const handleTypeSelect = (type) => {
+        const newFilter = filter.includes(type)
+            ? filter.filter(t => t !== type)
+            : [...filter, type];
+        setFilter(newFilter);
+        fetchPlaces(newFilter, category, isDateTimeFilterEnabled ? selectedDateTime : null);
+    };
+
     if (!user) {
         return (
             <GoogleOAuthProvider clientId={process.env.REACT_APP_GOOGLE_CLIENT_ID}>
@@ -167,13 +193,13 @@ const App = () => {
             <div>
                 <nav style={{ position: 'fixed', top: 0, width: '100%', zIndex: 10, backgroundColor: '#fff', padding: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                     <div style={{ display: 'flex', alignItems: 'center' }}>
-                        <Select
-                            isMulti
-                            options={primaryTypes}
-                            onChange={handleFilterChange}
-                            placeholder="Select types..."
-                            styles={{ container: (provided) => ({ ...provided, height: '40px', marginRight: '10px' }) }}
-                        />
+                        <Button
+                            variant="outlined"
+                            onClick={handleTypeDialogOpen}
+                            style={{ marginRight: '10px', height: '40px' }}
+                        >
+                            タイプを選択
+                        </Button>
                         <Select
                             isMulti
                             options={[{ value: 1, label: '店内OK' }, { value: 2, label: '外席OK' }]}
@@ -216,6 +242,36 @@ const App = () => {
                         )}
                     </div>
                 </nav>
+                <Dialog
+                    open={isTypeDialogOpen}
+                    onClose={handleTypeDialogClose}
+                    maxWidth="sm"
+                    fullWidth
+                >
+                    <DialogTitle>タイプを選択</DialogTitle>
+                    <DialogContent>
+                        <List>
+                            {primaryTypes.map((type) => (
+                                <ListItem key={type.value} disablePadding>
+                                    <ListItemButton onClick={() => handleTypeSelect(type.value)}>
+                                        <ListItemIcon>
+                                            <Checkbox
+                                                edge="start"
+                                                checked={filter.includes(type.value)}
+                                                tabIndex={-1}
+                                                disableRipple
+                                            />
+                                        </ListItemIcon>
+                                        <ListItemText primary={type.label} />
+                                    </ListItemButton>
+                                </ListItem>
+                            ))}
+                        </List>
+                    </DialogContent>
+                    <DialogActions>
+                        <Button onClick={handleTypeDialogClose}>閉じる</Button>
+                    </DialogActions>
+                </Dialog>
                 <MapComponent places={places} categoryColors={categoryColors} />
             </div>
         </GoogleOAuthProvider>
