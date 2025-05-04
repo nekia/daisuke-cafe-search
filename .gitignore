@@ -135,3 +135,4 @@ myenv/
 *.png
 
 node_modules/
+.firebase/
