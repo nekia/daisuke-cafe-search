@@ -50,7 +50,7 @@ const App = () => {
     const categoryColors = {
         '1': 'red',
         '2': 'blue',
-        // 他のカテゴリと色を追加
+        '3': 'yellow',
     };
 
     useEffect(() => {
@@ -281,7 +281,11 @@ const App = () => {
                             </Button>
                             <Select
                                 isMulti
-                                options={[{ value: 1, label: '店内OK' }, { value: 2, label: '外席OK' }]}
+                                options={[
+                                    { value: 1, label: '店内OK' },
+                                    { value: 2, label: '外席OK' },
+                                    { value: 3, label: 'もぐもぐ' }
+                                ]}
                                 onChange={handleCategoryChange}
                                 placeholder="Select category..."
                                 styles={{ container: (provided) => ({ ...provided, height: '40px', marginRight: '10px' }) }}

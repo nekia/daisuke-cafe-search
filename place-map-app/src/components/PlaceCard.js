@@ -37,6 +37,11 @@ const PlaceCard = ({ place, distance, onClick }) => {
             {place.openingHours.openNow ? '営業中' : '閉店中'}
           </Typography>
         )}
+        <Typography variant="body2" style={{ marginBottom: '8px' }}>
+          {place.url && (
+            <a href={place.url} target="_blank" rel="noopener noreferrer">詳細</a>
+          )}
+        </Typography>
       </CardContent>
     </StyledCard>
   );
