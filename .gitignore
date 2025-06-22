@@ -133,3 +133,6 @@ myenv/
 *.csv
 *.jpg
 *.png
+
+node_modules/
+.firebase/
