@@ -13,7 +13,7 @@ def get_place_id(location_name, cat_num, api_key):
     url = "https://places.googleapis.com/v1/places:searchText"
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-FieldMask": "places.displayName,places.primaryType,places.primaryTypeDisplayName,places.shortFormattedAddress,places.googleMapsUri,places.id,places.location,places.currentOpeningHours",
+        "X-Goog-FieldMask": "places.displayName,places.primaryTypeDisplayName,places.googleMapsUri,places.id,places.location",
         "X-Goog-Api-Key": api_key,
     }
     payload = {
@@ -24,19 +24,69 @@ def get_place_id(location_name, cat_num, api_key):
     if response.status_code == 200:
         results = response.json().get('places')
         if results:
+            # 結果が1件の場合は自動選択
+            if len(results) == 1:
+                selected_place = results[0]
+                print(f"✓ 1件のみ見つかりました: {selected_place.get('displayName')}")
+            else:
+                # 複数の結果がある場合はユーザーに選択させる
+                print(f"\n「{location_name}」で{len(results)}件の候補が見つかりました:")
+                print("-" * 60)
+                for i, place in enumerate(results):
+                    display_name = place.get('displayName', {}).get('text', 'N/A')
+                    primary_type = place.get('primaryTypeDisplayName', {}).get('text', 'N/A')
+                    print(f"{i + 1}. {display_name} ({primary_type})")
+                
+                print(f"{len(results) + 1}. スキップ（この場所を飛ばす）")
+                print("-" * 60)
+                
+                while True:
+                    try:
+                        choice = input(f"選択してください (1-{len(results) + 1}): ")
+                        choice_num = int(choice)
+                        if 1 <= choice_num <= len(results):
+                            selected_place = results[choice_num - 1]
+                            selected_name = selected_place.get('displayName', {}).get('text', 'N/A')
+                            print(f"✓ 選択されました: {selected_name}")
+                            break
+                        elif choice_num == len(results) + 1:
+                            print("✓ スキップします")
+                            return None
+                        else:
+                            print(f"1から{len(results) + 1}の数字を入力してください")
+                    except ValueError:
+                        print("数字を入力してください")
+                    except KeyboardInterrupt:
+                        print("\n処理を中断します")
+                        return None
+            
             return {
-                "id": results[0].get('id'),
-                "address": results[0].get('shortFormattedAddress'),
-                "location_name": results[0].get('displayName'),
-                "primary_type": results[0].get('primaryTypeDisplayName'),
-                "url": results[0].get('googleMapsUri'),
-                "location": results[0].get('location'),
-                "openingHours": results[0].get('currentOpeningHours'),
+                "id": selected_place.get('id'),
+                "location_name": selected_place.get('displayName'),
+                "primary_type": selected_place.get('primaryTypeDisplayName'),
+                "url": selected_place.get('googleMapsUri'),
+                "location": selected_place.get('location'),
                 "category": cat_num
             }
 
-    print(response.json())
+    print(f"エラー: {response.json()}")
     return None
+
+def get_opening_hours(place_id, api_key):
+    """営業時間情報を別途取得する関数"""
+    url = f"https://places.googleapis.com/v1/places/{place_id}"
+    headers = {
+        "Content-Type": "application/json",
+        "X-Goog-FieldMask": "currentOpeningHours",
+        "X-Goog-Api-Key": api_key,
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        result = response.json()
+        return result.get('currentOpeningHours')
+    else:
+        print(f"Failed to get opening hours for {place_id}: {response.json()}")
+        return None
 
 # MongoDB接続設定
 
@@ -48,8 +98,8 @@ collection = db.place_info
 # csv_file = '犬外席OK、散歩途中テイクアウトOK飲食店2.csv'
 # category = 2
 
-csv_file = '犬店内（インナーテラス含む）OK飲食店.csv'
-category = 1
+csv_file = 'New!! 犬外席OK、散歩途中テイクアウトOK飲食店_mini.csv'
+category = 2
 df = pd.read_csv(csv_file)
 
 # Google APIキー
@@ -71,6 +121,15 @@ for index, row in df.iterrows():
     place_info = get_place_id(location_name, category, api_key)
     if place_info:
         print(f"Retrieved location info: {place_info}")
+        
+        # 営業時間情報を別途取得するかどうか（必要に応じてTrue/Falseを切り替え）
+        get_hours = False  # 営業時間情報が必要な場合はTrueに変更
+        if get_hours:
+            opening_hours = get_opening_hours(place_info["id"], api_key)
+            if opening_hours:
+                place_info["openingHours"] = opening_hours
+                print(f"Retrieved opening hours for {location_name}")
+        
         # MongoDBにデータを挿入（既存IDがあれば更新、なければ挿入）
         collection.update_one(
             {"id": place_info["id"]},
