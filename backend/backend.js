@@ -56,7 +56,11 @@ const placeSchema = new mongoose.Schema({
         latitude: Number,
         longitude: Number
     },
-    openingHours: regularOpeningHoursSchema,
+    openingHours: {
+        type: regularOpeningHoursSchema,
+        required: false,
+        default: null
+    },
     category: Number
 });
 
@@ -123,7 +127,7 @@ app.get('/places', verifyToken, async (req, res) => {
     // Add isOpenNow to each place
     places = places.map(place => {
         const isOpen = isOpenNow(place.openingHours, specificDateTime);
-        if (place.openingHours === null) {
+        if (!place.openingHours) {
             console.log("openingHours has not been assigned : " + place.location_name.text)
         }
         return { ...place.toObject(), isOpenNow: isOpen };
@@ -148,19 +152,30 @@ app.listen(3001, () => {
 });
 
 const isOpenNow = (openingHours, specificDateTime) => {
+    // openingHours が存在しない、null、または periods が存在しない場合は false を返す
+    if (!openingHours || !openingHours.periods || !Array.isArray(openingHours.periods)) {
+        return false;
+    }
+
     const now = specificDateTime || new Date();
     const currentDay = now.getDay(); // 0: Sunday, 1: Monday, ..., 6: Saturday
     const currentHour = now.getHours();
     const currentMinute = now.getMinutes();
+    
     // Check each period to see if the specified time falls within any open period
-    if (openingHours === null || openingHours.periods === null) {
-        return false;
-    }
     for (const period of openingHours.periods) {
-        if (period.open.day === currentDay && period.open && period.close) {
+        // period の構造が正しいかチェック
+        if (period && period.open && period.close && 
+            period.open.day === currentDay &&
+            typeof period.open.hour === 'number' && 
+            typeof period.open.minute === 'number' &&
+            typeof period.close.hour === 'number' && 
+            typeof period.close.minute === 'number') {
+            
             const openTime = period.open.hour * 60 + period.open.minute;
             const closeTime = period.close.hour * 60 + period.close.minute;
             const currentTime = currentHour * 60 + currentMinute;
+            
             if (currentTime >= openTime && currentTime < closeTime) {
                 return true;
             }

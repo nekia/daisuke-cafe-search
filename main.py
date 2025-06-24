@@ -10,6 +10,7 @@ import csv
 # Category constants
 CAT_INSIDE_OK = 1
 CAT_TERRACE_OK = 2
+CAT_FAV_DOG_NG = 3
 
 load_dotenv()
 
@@ -17,7 +18,7 @@ def get_place_id(location_name, cat_num, api_key):
     url = "https://places.googleapis.com/v1/places:searchText"
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-FieldMask": "places.displayName,places.primaryTypeDisplayName,places.googleMapsUri,places.id,places.location",
+        "X-Goog-FieldMask": "places.displayName,places.primaryTypeDisplayName,places.googleMapsUri,places.id,places.location,places.formattedAddress",
         "X-Goog-Api-Key": api_key,
     }
     payload = {
@@ -39,7 +40,8 @@ def get_place_id(location_name, cat_num, api_key):
                 for i, place in enumerate(results):
                     display_name = place.get('displayName', {}).get('text', 'N/A')
                     primary_type = place.get('primaryTypeDisplayName', {}).get('text', 'N/A')
-                    print(f"{i + 1}. {display_name} ({primary_type})")
+                    address = place.get('formattedAddress', 'N/A')
+                    print(f"{i + 1}. {display_name} ({primary_type}) - {address}")
                 
                 print(f"{len(results) + 1}. スキップ（この場所を飛ばす）")
                 print("-" * 60)
@@ -100,8 +102,8 @@ db = client.places
 collection = db.place_info
 
 # CSVファイルの読み込み
-csv_file = 'New!! 犬外席OK、散歩途中テイクアウトOK飲食店_mini.csv'
-category = CAT_TERRACE_OK
+csv_file = 'おれたちのモグモグリスト.csv'
+category = CAT_FAV_DOG_NG
 df = pd.read_csv(csv_file, encoding='utf-8', quotechar='"', escapechar='\\', on_bad_lines='skip')
 
 # Google APIキー
