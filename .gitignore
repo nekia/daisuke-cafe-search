@@ -136,3 +136,6 @@ myenv/
 
 node_modules/
 .firebase/
+
+*.json
+*.txt

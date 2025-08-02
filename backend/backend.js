@@ -26,7 +26,13 @@ const db = mongoose.connection.useDb('places');
 const openingHourSchema = new mongoose.Schema({
     day: { type: Number, required: true },
     hour: { type: Number, required: true },
-    minute: { type: Number, required: true }
+    minute: { type: Number, required: true },
+    date: {
+        day: { type: Number },
+        month: { type: Number },
+        year: { type: Number }
+    },
+    truncated: { type: Boolean }
 });
 
 const periodSchema = new mongoose.Schema({
@@ -34,9 +40,20 @@ const periodSchema = new mongoose.Schema({
     close: { type: openingHourSchema, required: true }
 });
 
+const specialDaySchema = new mongoose.Schema({
+    date: {
+        day: { type: Number, required: true },
+        month: { type: Number, required: true },
+        year: { type: Number, required: true }
+    }
+});
+
 const regularOpeningHoursSchema = new mongoose.Schema({
     openNow: { type: Boolean, required: true },
+    nextCloseTime: { type: String },
+    nextOpenTime: { type: String },
     periods: { type: [periodSchema], required: true },
+    specialDays: { type: [specialDaySchema] },
     weekdayDescriptions: { type: [String], required: true }
 });
 
@@ -47,6 +64,8 @@ const placeSchema = new mongoose.Schema({
         languageCode: String
     },
     address: String,
+    alias: String,
+    businessStatus: String,
     primary_type: {
         text: String,
         languageCode: String
@@ -61,6 +80,7 @@ const placeSchema = new mongoose.Schema({
         required: false,
         default: null
     },
+    openingHoursStatus: String,
     category: Number
 });
 
@@ -94,6 +114,9 @@ app.get('/places', verifyToken, async (req, res) => {
     let query = {};
     let checkOpenDate = false;
     let specificDateTime = null;
+
+    // CLOSED_PERMANENTLYのレコードを除外
+    query['businessStatus'] = { $ne: 'CLOSED_PERMANENTLY' };
 
     if (req.query) {
         const primary_type = req.query.primary_type;
@@ -142,7 +165,7 @@ app.get('/places', verifyToken, async (req, res) => {
 });
 
 app.get('/primary_types', verifyToken, async (req, res) => {
-    const primaryTypes = await Place.distinct('primary_type.text');
+    const primaryTypes = await Place.distinct('primary_type.text', { businessStatus: { $ne: 'CLOSED_PERMANENTLY' } });
     console.log(primaryTypes)
     res.json(primaryTypes);
 });
