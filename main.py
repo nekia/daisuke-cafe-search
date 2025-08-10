@@ -26,38 +26,44 @@ def get_place_id(location_name, cat_num, api_key):
         "X-Goog-Api-Key": api_key,
     }
 
-    def fetch_page(body, wait=False, retries=3):
-        """ページを取得するヘルパー関数"""
-        if wait:
-            time.sleep(2)
-        for _ in range(retries):
-            response = requests.post(url, headers=headers, data=json.dumps(body))
-            if response.status_code == 200:
-                return response.json()
-            time.sleep(2)
-        print(f"エラー: {response.json()}")
-        return None
-
-    # 1ページ目を取得
-    first_payload = {
+    payload = {
         "textQuery": location_name,
         "languageCode": "ja",
         "maxResultCount": 20
     }
-    result_data = fetch_page(first_payload)
-    if not result_data:
+
+    response = requests.post(url, headers=headers, data=json.dumps(payload))
+    if response.status_code != 200:
+        print(f"エラー: {response.json()}")
         return None
 
-    pages = [result_data.get("places", [])]
-    next_page_token = result_data.get("nextPageToken")
-    current_page = 0
-    max_pages = 5  # 最大5ページまで
+    result_data = response.json()
+    places = result_data.get("places", [])
 
-    while True:
-        current_results = pages[current_page]
+    if not places:
+        print("該当する場所が見つかりませんでした")
+        return None
 
-        print(f"\n--- ページ {current_page + 1} ---")
-        for i, place in enumerate(current_results, start=1):
+    # 検索結果が1件の場合は自動的に選択
+    if len(places) == 1:
+        selected_place = places[0]
+        selected_name = selected_place.get('displayName', {}).get('text', 'N/A')
+        print(f"\n--- {location_name} の検索結果 ---")
+        print(f"結果が1件のため、自動的に選択します: {selected_name}")
+        
+        # 場所の詳細情報を表示
+        primary_type = selected_place.get('primaryTypeDisplayName', {}).get('text', 'N/A')
+        address = selected_place.get('formattedAddress', 'N/A')
+        business_status = selected_place.get('businessStatus', 'N/A')
+        
+        name_type = f"{selected_name} ({primary_type})"
+        print(f"1. {name_type}")
+        print(f"    {address} [状態: {business_status}]")
+        print("-" * 100)
+    else:
+        # 複数件の場合は従来通りユーザーに選択を求める
+        print(f"\n--- {location_name} の検索結果 ---")
+        for i, place in enumerate(places, start=1):
             display_name = place.get('displayName', {}).get('text', 'N/A')
             primary_type = place.get('primaryTypeDisplayName', {}).get('text', 'N/A')
             address = place.get('formattedAddress', 'N/A')
@@ -67,56 +73,34 @@ def get_place_id(location_name, cat_num, api_key):
             print(f"{i:2d}. {name_type}")
             print(f"    {address} [状態: {business_status}]")
 
-        # ナビゲーションオプション
         print("-" * 100)
-        if current_page > 0:
-            print("p. 前のページ")
-        if (current_page < len(pages) - 1) or (next_page_token and len(pages) < max_pages):
-            print("n. 次のページ")
         print("s. スキップ（この場所を飛ばす）")
         print("q. キャンセル")
 
-        choice = input(f"選択してください (1-{len(current_results)}, p/n/s/q): ").strip().lower()
+        while True:
+            choice = input(f"選択してください (1-{len(places)}, s/q): ").strip().lower()
 
-        if choice == 'p' and current_page > 0:
-            current_page -= 1
-            continue
-        elif choice == 'n':
-            if current_page < len(pages) - 1:
-                current_page += 1
-                continue
-            if next_page_token and len(pages) < max_pages:
-                result_data = fetch_page({"pageToken": next_page_token}, wait=True)
-                if result_data:
-                    pages.append(result_data.get("places", []))
-                    next_page_token = result_data.get("nextPageToken")
-                    current_page += 1
-                else:
-                    print("次のページを取得できませんでした")
-            else:
-                print("これ以上の結果はありません")
-            continue
-        elif choice == 's':
-            print("✓ スキップします")
-            return None
-        elif choice == 'q':
-            print("✓ キャンセルしました")
-            return None
-        else:
-            try:
-                choice_num = int(choice)
-                if 1 <= choice_num <= len(current_results):
-                    selected_place = current_results[choice_num - 1]
-                    selected_name = selected_place.get('displayName', {}).get('text', 'N/A')
-                    print(f"✓ 選択されました: {selected_name}")
-                    break
-                else:
-                    print(f"1から{len(current_results)}の数字を入力してください")
-            except ValueError:
-                print("有効な選択肢を入力してください")
-            except KeyboardInterrupt:
-                print("\n処理を中断します")
+            if choice == 's':
+                print("✓ スキップします")
                 return None
+            elif choice == 'q':
+                print("✓ キャンセルしました")
+                return None
+            else:
+                try:
+                    choice_num = int(choice)
+                    if 1 <= choice_num <= len(places):
+                        selected_place = places[choice_num - 1]
+                        selected_name = selected_place.get('displayName', {}).get('text', 'N/A')
+                        print(f"✓ 選択されました: {selected_name}")
+                        break
+                    else:
+                        print(f"1から{len(places)}の数字を入力してください")
+                except ValueError:
+                    print("有効な選択肢を入力してください")
+                except KeyboardInterrupt:
+                    print("\n処理を中断します")
+                    return None
 
     # businessStatusをチェック
     business_status = selected_place.get('businessStatus')

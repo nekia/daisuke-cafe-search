@@ -9,7 +9,7 @@ load_dotenv()
 
 def get_business_status(place_id, api_key):
     """business_status情報を取得する関数"""
-    url = f"https://places.googleapis.com/v1/places/{place_id}"
+    url = f"https://places.googleapis.com/v1/places/{place_id}?languageCode=ja"
     headers = {
         "Content-Type": "application/json",
         "X-Goog-FieldMask": "businessStatus",

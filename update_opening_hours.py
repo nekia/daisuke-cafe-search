@@ -9,7 +9,7 @@ load_dotenv()
 
 def get_opening_hours(place_id, api_key):
     """営業時間情報を取得する関数"""
-    url = f"https://places.googleapis.com/v1/places/{place_id}"
+    url = f"https://places.googleapis.com/v1/places/{place_id}?languageCode=ja"
     headers = {
         "Content-Type": "application/json",
         "X-Goog-FieldMask": "currentOpeningHours",
