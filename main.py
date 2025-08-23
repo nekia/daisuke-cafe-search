@@ -3,6 +3,7 @@ import pandas as pd
 import requests
 import json
 import time
+import argparse
 from dotenv import load_dotenv
 # from urllib.parse import unquote
 from pymongo import MongoClient
@@ -141,12 +142,36 @@ client = MongoClient(os.environ["MONGODB_ADDRESS"])
 db = client.places
 collection = db.place_info
 
-# CSVファイルの読み込み
+# CSVファイルの定義
 csv_files = [
     ('犬店内（インナーテラス含む）OK飲食店.csv', CAT_INSIDE_OK),
     ('New!! 犬外席OK、散歩途中テイクアウトOK飲食店.csv', CAT_TERRACE_OK),
     ('おれたちのモグモグリスト.csv', CAT_FAV_DOG_NG)
 ]
+
+def parse_arguments():
+    """コマンドライン引数を解析する"""
+    parser = argparse.ArgumentParser(description='CSVファイルから場所情報を取得してMongoDBに登録する')
+    parser.add_argument('--categories', '-c', nargs='+', type=int,
+                       choices=[CAT_INSIDE_OK, CAT_TERRACE_OK, CAT_FAV_DOG_NG],
+                       help='処理するカテゴリ番号を指定（1: 犬店内OK, 2: 犬外席OK, 3: お気に入り）')
+    parser.add_argument('--list', '-l', action='store_true',
+                       help='利用可能なカテゴリの一覧を表示')
+    
+    return parser.parse_args()
+
+def get_csv_files_by_categories(specified_categories=None):
+    """指定されたカテゴリに基づいてCSVファイルのリストを取得する"""
+    if specified_categories is None:
+        return csv_files
+    
+    # 指定されたカテゴリに基づいてCSVファイルをフィルタリング
+    files_to_process = []
+    for file_info in csv_files:
+        if file_info[1] in specified_categories:
+            files_to_process.append(file_info)
+    
+    return files_to_process
 
 # Google APIキー
 api_key = os.environ["GOOGLE_MAPS_API_KEY"]
@@ -170,8 +195,28 @@ def check_location_exists(location_name):
     result = collection.find_one({"alias": location_name})
     return result is not None
 
+# コマンドライン引数を解析
+args = parse_arguments()
+
+# 利用可能なカテゴリ一覧を表示する場合
+if args.list:
+    print("利用可能なカテゴリ:")
+    print(f"  {CAT_INSIDE_OK}: 犬店内（インナーテラス含む）OK飲食店")
+    print(f"  {CAT_TERRACE_OK}: 犬外席OK、散歩途中テイクアウトOK飲食店")
+    print(f"  {CAT_FAV_DOG_NG}: おれたちのモグモグリスト")
+    exit(0)
+
+# 処理するCSVファイルを決定
+files_to_process = get_csv_files_by_categories(args.categories)
+
+if not files_to_process:
+    print("処理するカテゴリが指定されていません。すべてのカテゴリを処理します。")
+    files_to_process = csv_files
+
+print(f"処理対象カテゴリ数: {len(files_to_process)}件")
+
 # 各CSVファイルを処理
-for csv_file, category in csv_files:
+for csv_file, category in files_to_process:
     print(f"\n=== 処理中: {csv_file} (カテゴリ: {category}) ===")
     
     try:
