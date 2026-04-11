@@ -26,7 +26,54 @@ import PlaceCard from './components/PlaceCard';
 import Typography from '@mui/material/Typography';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
+import Box from '@mui/material/Box';
 import { LoadScript } from '@react-google-maps/api';
+
+/** Google Places 風の primary_type.text に合わせたプリセット（DBに存在するものだけ下書きに反映） */
+const TYPE_FILTER_PRESETS = [
+    {
+        id: 'cafe',
+        label: 'カフェ系',
+        types: ['cafe', 'coffee_shop', 'bakery', 'tea_house', 'meal_takeaway', 'dessert_shop', 'ice_cream_shop'],
+    },
+    {
+        id: 'asian',
+        label: 'アジアン系',
+        types: [
+            'asian_restaurant',
+            'chinese_restaurant',
+            'japanese_restaurant',
+            'korean_restaurant',
+            'thai_restaurant',
+            'vietnamese_restaurant',
+            'indian_restaurant',
+            'ramen_restaurant',
+            'sushi_restaurant',
+            'yakiniku_restaurant',
+        ],
+    },
+    {
+        id: 'western',
+        label: '洋食・イタリアン等',
+        types: [
+            'restaurant',
+            'italian_restaurant',
+            'french_restaurant',
+            'american_restaurant',
+            'steak_house',
+            'seafood_restaurant',
+            'brunch_restaurant',
+            'fast_food_restaurant',
+            'hamburger_restaurant',
+            'pizza_restaurant',
+        ],
+    },
+    {
+        id: 'bar_pub',
+        label: 'バー・パブ',
+        types: ['bar', 'pub', 'wine_bar', 'sports_bar', 'night_club'],
+    },
+];
 
 const App = () => {
     const [places, setPlaces] = useState([]);
@@ -39,6 +86,8 @@ const App = () => {
     const [user, setUser] = useState(null);
     const [token, setToken] = useState(null);
     const [isTypeDialogOpen, setIsTypeDialogOpen] = useState(false);
+    /** タイプ選択ダイアログ内の下書き（確定までマップに反映しない） */
+    const [typeFilterDraft, setTypeFilterDraft] = useState([]);
     const allowedEmails = ['nekiaiken@gmail.com', 'nekiaiyaiken@gmail.com', 'kumatsushi@gmail.com'];  // 許可されたメールアドレスのリスト
     const backendEndpoint = process.env.REACT_APP_BACKEND_ENDPOINT;
     const defaultPosition = { lat: 35.681236, lng: 139.767125 };
@@ -107,11 +156,6 @@ const App = () => {
         const selectedValues = selectedOptions ? selectedOptions.map(option => option.value) : [];
         setFilter(selectedValues);
         fetchPlaces(selectedValues, category, isDateTimeFilterEnabled ? selectedDateTime : null);
-
-        // const query = selectedValues.map(type => `primary_type=${type}`).join('&');
-        // fetch(`http://localhost:3001/places?${query}`)
-        //     .then(response => response.json())
-        //     .then(data => setPlaces(data));
     };
 
     const handleCategoryChange = (selectedOptions) => {
@@ -170,6 +214,7 @@ const App = () => {
     };
 
     const handleTypeDialogOpen = () => {
+        setTypeFilterDraft([...filter]);
         setIsTypeDialogOpen(true);
     };
 
@@ -177,12 +222,27 @@ const App = () => {
         setIsTypeDialogOpen(false);
     };
 
-    const handleTypeSelect = (type) => {
-        const newFilter = filter.includes(type)
-            ? filter.filter(t => t !== type)
-            : [...filter, type];
-        setFilter(newFilter);
-        fetchPlaces(newFilter, category, isDateTimeFilterEnabled ? selectedDateTime : null);
+    const handleTypeDraftToggle = (type) => {
+        setTypeFilterDraft((prev) =>
+            prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type]
+        );
+    };
+
+    const handleTypeFilterClearDraft = () => {
+        setTypeFilterDraft([]);
+    };
+
+    const applyPresetToDraft = (presetTypes) => {
+        const available = new Set(primaryTypes.map((t) => t.value));
+        const matched = presetTypes.filter((t) => available.has(t));
+        setTypeFilterDraft((prev) => [...new Set([...prev, ...matched])]);
+    };
+
+    const handleTypeFilterConfirm = () => {
+        const next = [...typeFilterDraft];
+        setFilter(next);
+        fetchPlaces(next, category, isDateTimeFilterEnabled ? selectedDateTime : null);
+        setIsTypeDialogOpen(false);
     };
 
     // 現在地を取得する関数
@@ -277,7 +337,7 @@ const App = () => {
                                 onClick={handleTypeDialogOpen}
                                 style={{ marginRight: '10px', height: '40px' }}
                             >
-                                タイプを選択
+                                タイプを選択{filter.length > 0 ? ` (${filter.length})` : ''}
                             </Button>
                             <Select
                                 isMulti
@@ -344,14 +404,35 @@ const App = () => {
                     >
                         <DialogTitle>タイプを選択</DialogTitle>
                         <DialogContent>
-                            <List>
+                            <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                                チェック後「確定」で地図に反映されます。閉じるだけでは変更は保存されません。
+                            </Typography>
+                            <Typography variant="subtitle2" sx={{ mt: 1, mb: 0.5 }}>
+                                プリセット
+                            </Typography>
+                            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
+                                {TYPE_FILTER_PRESETS.map((preset) => (
+                                    <Button
+                                        key={preset.id}
+                                        size="small"
+                                        variant="outlined"
+                                        onClick={() => applyPresetToDraft(preset.types)}
+                                    >
+                                        {preset.label}
+                                    </Button>
+                                ))}
+                            </Box>
+                            <Button size="small" color="secondary" onClick={handleTypeFilterClearDraft} sx={{ mb: 1 }}>
+                                すべてクリア
+                            </Button>
+                            <List dense sx={{ pt: 0 }}>
                                 {primaryTypes.map((type) => (
                                     <ListItem key={type.value} disablePadding>
-                                        <ListItemButton onClick={() => handleTypeSelect(type.value)}>
-                                            <ListItemIcon>
+                                        <ListItemButton onClick={() => handleTypeDraftToggle(type.value)}>
+                                            <ListItemIcon sx={{ minWidth: 42 }}>
                                                 <Checkbox
                                                     edge="start"
-                                                    checked={filter.includes(type.value)}
+                                                    checked={typeFilterDraft.includes(type.value)}
                                                     tabIndex={-1}
                                                     disableRipple
                                                 />
@@ -364,6 +445,9 @@ const App = () => {
                         </DialogContent>
                         <DialogActions>
                             <Button onClick={handleTypeDialogClose}>閉じる</Button>
+                            <Button variant="contained" onClick={handleTypeFilterConfirm}>
+                                確定
+                            </Button>
                         </DialogActions>
                     </Dialog>
                     <div style={{ display: 'flex', flex: '1', marginTop: '60px' }}>

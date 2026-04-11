@@ -1,0 +1,28 @@
+project_id                       = "daisuke-cafe-search"
+region                           = "asia-northeast1"
+environment                      = "prod"
+backend_service_name             = "daisuke-cafe-search-backend"
+artifact_registry_repository_id  = "backend-images"
+
+# After first Cloud Build push to Artifact Registry, point container_image here.
+# If you set :latest here, `terraform apply` always deploys current latest image.
+# For strict reproducibility, pin to a SHA tag instead.
+container_image = "asia-northeast1-docker.pkg.dev/daisuke-cafe-search/backend-images/backend:latest"
+
+allow_unauthenticated       = true
+runtime_service_account_email = null
+create_runtime_service_account = false
+
+# Keep existing production behavior by default: use Secret Manager refs
+use_secret_manager_env                   = true
+mongodb_connection_string_secret_name    = "MONGODB_CONNECTION_STRING"
+mongodb_connection_string_secret_version = "latest"
+google_client_id_secret_name             = "REACT_APP_GOOGLE_CLIENT_ID"
+google_client_id_secret_version          = "latest"
+
+# Use these only when use_secret_manager_env = false
+mongodb_connection_string = null
+google_client_id          = null
+
+cpu    = "1"
+memory = "512Mi"

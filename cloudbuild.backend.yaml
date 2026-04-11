@@ -1,0 +1,26 @@
+steps:
+  - id: Build backend image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_BACKEND_IMAGE}:${SHORT_SHA}
+      - -t
+      - ${_BACKEND_IMAGE}:latest
+      - ./backend
+
+  - id: Push SHA image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_BACKEND_IMAGE}:${SHORT_SHA}
+
+  - id: Push latest image
+    name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - ${_BACKEND_IMAGE}:latest
+
+images:
+  - ${_BACKEND_IMAGE}:${SHORT_SHA}
+  - ${_BACKEND_IMAGE}:latest
