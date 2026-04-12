@@ -70,6 +70,8 @@ const placeSchema = new mongoose.Schema({
         text: String,
         languageCode: String
     },
+    /** Places API (New) の primaryType（例: cafe）。フィルタ・プリセットはこちらと primary_type.text の両方でマッチ */
+    primary_type_api: { type: String, required: false },
     url: String,
     location: {
         latitude: Number,
@@ -121,12 +123,14 @@ app.get('/places', verifyToken, async (req, res) => {
     if (req.query) {
         const primary_type = req.query.primary_type;
         if (primary_type) {
-            if (Array.isArray(primary_type) && primary_type.length > 0) {
-                query['primary_type.text'] = { $in: primary_type };
-            } else if (!Array.isArray(primary_type)) {
-                query['primary_type.text'] = { $in: [primary_type] };
-            }
-            console.log(query['primary_type.text'])
+            const typeList = Array.isArray(primary_type) && primary_type.length > 0
+                ? primary_type
+                : [primary_type];
+            query.$or = [
+                { primary_type_api: { $in: typeList } },
+                { 'primary_type.text': { $in: typeList } },
+            ];
+            console.log('primary_type filter', typeList);
         }
 
         const category = req.query.category;
@@ -165,8 +169,11 @@ app.get('/places', verifyToken, async (req, res) => {
 });
 
 app.get('/primary_types', verifyToken, async (req, res) => {
-    const primaryTypes = await Place.distinct('primary_type.text', { businessStatus: { $ne: 'CLOSED_PERMANENTLY' } });
-    console.log(primaryTypes)
+    /** 表示は従来どおり primary_type.text の一意一覧（チェックボックスの value と一致させる） */
+    const primaryTypes = await Place.distinct('primary_type.text', {
+        businessStatus: { $ne: 'CLOSED_PERMANENTLY' },
+    });
+    console.log(primaryTypes.length, 'distinct primary_type.text');
     res.json(primaryTypes);
 });
 

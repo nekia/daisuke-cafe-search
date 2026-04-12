@@ -3,8 +3,11 @@ import { GoogleMap, Marker, InfoWindow } from '@react-google-maps/api';
 
 const MapComponent = ({ places = [], categoryColors, center, onCenterChange, currentLocation }) => {
     const mapContainerStyle = {
-        height: '100vh',
-        width: '100vw'
+        height: '100%',
+        width: '100%',
+        position: 'absolute',
+        left: 0,
+        top: 0,
     };
 
     const [selected, setSelected] = useState(null);

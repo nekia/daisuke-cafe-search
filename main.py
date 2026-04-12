@@ -19,11 +19,19 @@ load_dotenv()
 
 def get_place_id(location_name, cat_num, api_key):
     """Google Places API から候補を取得し、利用者に選択させる"""
+    if location_name is None or pd.isna(location_name):
+        print("スキップ: 店名が空です")
+        return None
+    text = str(location_name).strip()
+    if not text or text.lower() == "nan":
+        print("スキップ: 店名が空です")
+        return None
+    location_name = text
 
     url = "https://places.googleapis.com/v1/places:searchText"
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-FieldMask": "places.displayName,places.primaryTypeDisplayName,places.googleMapsUri,places.id,places.location,places.formattedAddress,places.businessStatus",
+        "X-Goog-FieldMask": "places.displayName,places.primaryType,places.primaryTypeDisplayName,places.googleMapsUri,places.id,places.location,places.formattedAddress,places.businessStatus",
         "X-Goog-Api-Key": api_key,
     }
 
@@ -113,6 +121,7 @@ def get_place_id(location_name, cat_num, api_key):
         "id": selected_place.get('id'),
         "location_name": selected_place.get('displayName'),
         "primary_type": selected_place.get('primaryTypeDisplayName'),
+        "primary_type_api": selected_place.get('primaryType'),
         "url": selected_place.get('googleMapsUri'),
         "location": selected_place.get('location'),
         "category": cat_num,
@@ -232,8 +241,18 @@ for csv_file, category in files_to_process:
     # 各場所の名前について詳細情報を取得
     for index, row in df.iterrows():
         # location_name = unquote(row['タイトル'])
-        location_name = row['タイトル']
-        comment = row['メモ']
+        raw_title = row['タイトル']
+        if pd.isna(raw_title):
+            print(f"行スキップ (index={index}): タイトルが空です")
+            continue
+        location_name = str(raw_title).strip()
+        if not location_name:
+            print(f"行スキップ (index={index}): タイトルが空です")
+            continue
+
+        raw_memo = row['メモ']
+        comment = '' if pd.isna(raw_memo) else str(raw_memo)
+
         # 使用例
         exists = check_location_exists(location_name)
         if exists:

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import Select from 'react-select';
 import { GoogleOAuthProvider, GoogleLogin } from '@react-oauth/google';
 import { jwtDecode } from 'jwt-decode';  // 名前付きエクスポートとしてインポート
@@ -8,7 +8,6 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 // import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFnsV3';
 import jaLocale from 'date-fns/locale/ja';
-import TextField from '@mui/material/TextField';
 import Checkbox from '@mui/material/Checkbox';
 import Button from '@mui/material/Button';
 import FormControlLabel from '@mui/material/FormControlLabel';
@@ -27,53 +26,175 @@ import Typography from '@mui/material/Typography';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Box from '@mui/material/Box';
+import useMediaQuery from '@mui/material/useMediaQuery';
 import { LoadScript } from '@react-google-maps/api';
+import primaryTypeTextCatalog from './data/primary_type_text.json';
 
-/** Google Places 風の primary_type.text に合わせたプリセット（DBに存在するものだけ下書きに反映） */
-const TYPE_FILTER_PRESETS = [
+/** `primary_type_text.json` の表記のみ（綴り違いはここで落ちる） */
+const PRIMARY_TYPE_TEXT_CATALOG = new Set(primaryTypeTextCatalog);
+
+/**
+ * DB の primary_type.text（日本語等）に合わせたプリセット。
+ * 候補は primary_type_text.json に含まれるものだけ下書きへ載る（API の distinct と交差）。
+ */
+const TYPE_FILTER_PRESET_SPECS = [
     {
-        id: 'cafe',
-        label: 'カフェ系',
-        types: ['cafe', 'coffee_shop', 'bakery', 'tea_house', 'meal_takeaway', 'dessert_shop', 'ice_cream_shop'],
+        id: 'cafe_sweets',
+        label: 'カフェ・スイーツ',
+        types: [
+            'Cafe',
+            'アイスクリーム店',
+            'カフェテリア',
+            'カフェ・喫茶',
+            'ケーキ屋',
+            'コーヒー スタンド',
+            'コーヒーショップ・喫茶店',
+            'ジュースバー',
+            'スイーツ店',
+            'チョコレート ショップ',
+            'ティーハウス',
+            'デザート ショップ',
+            '洋菓子店',
+            'ベーカリー',
+            'ベーグル専門店',
+            'ドーナツ店',
+            '菓子店',
+        ],
     },
     {
         id: 'asian',
-        label: 'アジアン系',
+        label: 'アジア料理',
         types: [
-            'asian_restaurant',
-            'chinese_restaurant',
-            'japanese_restaurant',
-            'korean_restaurant',
-            'thai_restaurant',
-            'vietnamese_restaurant',
-            'indian_restaurant',
-            'ramen_restaurant',
-            'sushi_restaurant',
-            'yakiniku_restaurant',
+            'アジア料理店',
+            'インドネシア料理店',
+            'インド料理店',
+            'タイ料理店',
+            '台湾料理店',
+            '中華料理店',
+            '南インド料理店',
+            'ベトナム料理店',
+            '和食店',
+            '寿司店',
+            '広東料理店',
+            '点心店',
+            '焼き鳥店',
+            '焼肉店',
+            '韓国料理店',
+            'ラーメン屋',
+            '飲茶・点心店',
         ],
+    },
+    {
+        id: 'washoku',
+        label: '和食',
+        types: ['和食店', '寿司店', '焼き鳥店', '焼肉店', 'ラーメン屋'],
     },
     {
         id: 'western',
-        label: '洋食・イタリアン等',
+        label: '欧米・多国籍レストラン',
         types: [
-            'restaurant',
-            'italian_restaurant',
-            'french_restaurant',
-            'american_restaurant',
-            'steak_house',
-            'seafood_restaurant',
-            'brunch_restaurant',
-            'fast_food_restaurant',
-            'hamburger_restaurant',
-            'pizza_restaurant',
+            'アメリカ料理店',
+            'イタリア料理店',
+            'アフリカ料理店',
+            'ステーキハウス',
+            'スペイン料理店',
+            'ドイツ料理店',
+            'フランス料理店',
+            'メキシコ料理店',
+            'ブラジル料理店',
+            'レストラン',
+            '洋食レストラン',
+            'ファミリー レストラン',
+            'ファースト フード店',
+            'ビストロ',
+            'ダイナー',
+            'ビュッフェ レストラン',
+            'ブランチ レストラン',
+            '朝食レストラン',
+            '地中海料理店',
+            'ギリシャ料理店',
+            'ベルギー料理店',
+            'トルコ料理店',
+            '中東料理店',
+            'ハンバーガー店',
+            'ピザ店',
+            'ビーガン料理店',
+            'ベジタリアン料理店',
+            'シーフード・海鮮料理店',
         ],
     },
     {
-        id: 'bar_pub',
-        label: 'バー・パブ',
-        types: ['bar', 'pub', 'wine_bar', 'sports_bar', 'night_club'],
+        id: 'bar_izakaya',
+        label: 'バー・居酒屋',
+        types: ['バー', 'パブ', 'ワインバー', 'バー＆グリル', '居酒屋', '酒店'],
+    },
+    {
+        id: 'casual_takeaway',
+        label: '軽食・テイクアウト',
+        types: ['サンドイッチ店', 'カレー店', 'テイクアウト', '軽食店'],
+    },
+    {
+        id: 'park_green_dog',
+        label: '公園・緑・ドッグ',
+        types: ['公園', '庭園', '植物園', '犬専用公園', 'ドッグカフェ'],
     },
 ];
+
+const TYPE_FILTER_PRESETS = TYPE_FILTER_PRESET_SPECS.map((preset) => ({
+    ...preset,
+    types: preset.types.filter((t) => PRIMARY_TYPE_TEXT_CATALOG.has(t)),
+}));
+
+const ALLOWED_EMAILS = ['nekiaiken@gmail.com', 'nekiaiyaiken@gmail.com', 'kumatsushi@gmail.com'];
+
+/** OAuth 開始前に表示（client_id 未設定で Google 側の 400 を踏まないようにする） */
+const MissingGoogleOAuthEnvMessage = () => (
+    <div
+        style={{
+            maxWidth: 560,
+            margin: '12vh auto',
+            padding: 24,
+            fontFamily: 'system-ui, sans-serif',
+            lineHeight: 1.6,
+        }}
+    >
+        <h1 style={{ fontSize: '1.25rem', marginTop: 0 }}>Google ログインの設定が不足しています</h1>
+        <p>
+            環境変数 <code>REACT_APP_GOOGLE_CLIENT_ID</code> が空のため、リクエストに{' '}
+            <strong>client_id</strong> が含まれず、Google がエラー 400（invalid_request）を返します。
+        </p>
+        <p>
+            <code>place-map-app</code> 直下に <code>.env.development.local</code> を作成し（または既存の env
+            に追記し）、次のように OAuth 2.0 の Web クライアント ID を設定してください。保存後は{' '}
+            <code>npm start</code> を再起動します。
+        </p>
+        <pre
+            style={{
+                background: '#f5f5f5',
+                padding: 12,
+                borderRadius: 8,
+                overflow: 'auto',
+                fontSize: 13,
+            }}
+        >
+            {`REACT_APP_GOOGLE_CLIENT_ID=xxxxx.apps.googleusercontent.com
+REACT_APP_BACKEND_ENDPOINT=http://localhost:3001
+REACT_APP_GOOGLE_MAPS_API_KEY=your-maps-api-key`}
+        </pre>
+        <p style={{ fontSize: 14, color: '#555' }}>
+            雛形はリポジトリの <code>.env.example</code> をコピーして利用できます。
+        </p>
+        <button
+            type="button"
+            onClick={() => {
+                localStorage.removeItem('authToken');
+                window.location.reload();
+            }}
+        >
+            保存済みのログイントークンを消して再読み込み
+        </button>
+    </div>
+);
 
 const App = () => {
     const [places, setPlaces] = useState([]);
@@ -88,13 +209,14 @@ const App = () => {
     const [isTypeDialogOpen, setIsTypeDialogOpen] = useState(false);
     /** タイプ選択ダイアログ内の下書き（確定までマップに反映しない） */
     const [typeFilterDraft, setTypeFilterDraft] = useState([]);
-    const allowedEmails = ['nekiaiken@gmail.com', 'nekiaiyaiken@gmail.com', 'kumatsushi@gmail.com'];  // 許可されたメールアドレスのリスト
     const backendEndpoint = process.env.REACT_APP_BACKEND_ENDPOINT;
+    const googleClientId = (process.env.REACT_APP_GOOGLE_CLIENT_ID || '').trim();
     const defaultPosition = { lat: 35.681236, lng: 139.767125 };
     const [currentLocation, setCurrentLocation] = useState(defaultPosition);
     const [sortedPlaces, setSortedPlaces] = useState([]);
     const [position, setPosition] = useState(defaultPosition);
     const [viewMode, setViewMode] = useState('map'); // 'map' or 'list'
+    const isNarrow = useMediaQuery('(max-width:600px)');
 
     const categoryColors = {
         '1': 'red',
@@ -109,7 +231,7 @@ const App = () => {
             const currentTime = Date.now() / 1000; // 現在の時刻を秒単位で取得
             console.log(`Expired after ${decodedToken.exp - currentTime} secs`)
             console.log(`now : ${new Date().toString()}`);
-            if (decodedToken.exp > currentTime && allowedEmails.includes(decodedToken.email)) {
+            if (decodedToken.exp > currentTime && ALLOWED_EMAILS.includes(decodedToken.email)) {
                 setUser(decodedToken);
                 setToken(storedToken);
             } else {
@@ -118,18 +240,10 @@ const App = () => {
         }
     }, []);
 
-    useEffect(() => {
-        console.log(`backendEndpoint: ${backendEndpoint}`)
-        if (token) {
-            fetchPlaces(filter, category, isDateTimeFilterEnabled ? selectedDateTime : null);
-            fetchPrimaryTypes();
-        }
-    }, [token]);
-
-    const fetchPlaces = (types, category, dateTime) => {
+    const fetchPlaces = useCallback((types, categoryArg, dateTime) => {
         let query = types.map(type => `primary_type=${type}`).join('&');
         query += '&'
-        query += category.map(cat => `category=${cat}`).join('&');
+        query += categoryArg.map(cat => `category=${cat}`).join('&');
         if (dateTime) {
             query += `&dateTime=${dateTime.toISOString()}`;
         }
@@ -140,43 +254,44 @@ const App = () => {
         })
             .then(response => response.json())
             .then(data => setPlaces(data));
-    };
+    }, [token, backendEndpoint]);
 
-    const fetchPrimaryTypes = () => {
+    const fetchPrimaryTypes = useCallback(() => {
         fetch(`${backendEndpoint}/primary_types`, {
             headers: {
                 'Authorization': `Bearer ${token}`
             }
         })
             .then(response => response.json())
-            .then(data => setPrimaryTypes(data.map(type => ({ value: type, label: type }))));
-    };
+            .then((data) =>
+                setPrimaryTypes(
+                    (Array.isArray(data) ? data : []).map((item) =>
+                        typeof item === 'string' ? { value: item, label: item } : item
+                    )
+                )
+            );
+    }, [token, backendEndpoint]);
 
-    const handleFilterChange = (selectedOptions) => {
-        const selectedValues = selectedOptions ? selectedOptions.map(option => option.value) : [];
-        setFilter(selectedValues);
-        fetchPlaces(selectedValues, category, isDateTimeFilterEnabled ? selectedDateTime : null);
-    };
+    useEffect(() => {
+        console.log(`backendEndpoint: ${backendEndpoint}`)
+        if (token) {
+            fetchPlaces(filter, category, isDateTimeFilterEnabled ? selectedDateTime : null);
+            fetchPrimaryTypes();
+        }
+    }, [token, backendEndpoint, category, filter, isDateTimeFilterEnabled, selectedDateTime, fetchPlaces, fetchPrimaryTypes]);
 
     const handleCategoryChange = (selectedOptions) => {
         const selectedValues = selectedOptions ? selectedOptions.map(option => option.value) : [];
         setCategory(selectedValues);
-        fetchPlaces(filter, selectedValues, isDateTimeFilterEnabled ? selectedDateTime : null);
-
-        // const query = selectedValues.map(type => `primary_type=${type}`).join('&');
-        // fetch(`http://localhost:3001/places?${query}`)
-        //     .then(response => response.json())
-        //     .then(data => setPlaces(data));
     };
 
     const handleDateTimeChange = (date) => {
         setSelectedDateTime(date);
-        fetchPlaces(filter, category, isDateTimeFilterEnabled ? date : null);
     };
 
     const handleLoginSuccess = (response) => {
         const decodedToken = jwtDecode(response.credential);
-        if (allowedEmails.includes(decodedToken.email)) {
+        if (ALLOWED_EMAILS.includes(decodedToken.email)) {
             setUser(decodedToken);
             setToken(response.credential);
             localStorage.setItem('authToken', response.credential); // トークンをローカルストレージに保存
@@ -197,20 +312,11 @@ const App = () => {
     };
     
     const handleDateTimeFilterToggle = () => {
-        setIsDateTimeFilterEnabled(!isDateTimeFilterEnabled);
-        if (!isDateTimeFilterEnabled) {
-            fetchPlaces(filter, category, selectedDateTime);
-        } else {
-            fetchPlaces(filter, category, null);
-        }
+        setIsDateTimeFilterEnabled((prev) => !prev);
     };
     
     const handleResetDateTime = () => {
-        const now = new Date();
-        setSelectedDateTime(now);
-        if (isDateTimeFilterEnabled) {
-            fetchPlaces(filter, category, now);
-        }
+        setSelectedDateTime(new Date());
     };
 
     const handleTypeDialogOpen = () => {
@@ -234,14 +340,18 @@ const App = () => {
 
     const applyPresetToDraft = (presetTypes) => {
         const available = new Set(primaryTypes.map((t) => t.value));
-        const matched = presetTypes.filter((t) => available.has(t));
+        const matched = new Set();
+        for (const text of presetTypes) {
+            if (available.has(text)) {
+                matched.add(text);
+            }
+        }
         setTypeFilterDraft((prev) => [...new Set([...prev, ...matched])]);
     };
 
     const handleTypeFilterConfirm = () => {
         const next = [...typeFilterDraft];
         setFilter(next);
-        fetchPlaces(next, category, isDateTimeFilterEnabled ? selectedDateTime : null);
         setIsTypeDialogOpen(false);
     };
 
@@ -312,9 +422,13 @@ const App = () => {
         });
     };
 
+    if (!googleClientId) {
+        return <MissingGoogleOAuthEnvMessage />;
+    }
+
     if (!user) {
         return (
-            <GoogleOAuthProvider clientId={process.env.REACT_APP_GOOGLE_CLIENT_ID}>
+            <GoogleOAuthProvider clientId={googleClientId}>
                 <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
                     <GoogleLogin
                         onSuccess={handleLoginSuccess}
@@ -327,38 +441,104 @@ const App = () => {
     }
 
     return (
-        <GoogleOAuthProvider clientId={process.env.REACT_APP_GOOGLE_CLIENT_ID}>
+        <GoogleOAuthProvider clientId={googleClientId}>
             <LoadScript googleMapsApiKey={process.env.REACT_APP_GOOGLE_MAPS_API_KEY}>
-                <div style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-                    <nav style={{ position: 'fixed', top: 0, width: '100%', zIndex: 10, backgroundColor: '#fff', padding: '10px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <div style={{ display: 'flex', alignItems: 'center' }}>
+                <div
+                    style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        height: '100vh',
+                        overflow: 'hidden',
+                        boxSizing: 'border-box',
+                    }}
+                >
+                    <Box
+                        component="nav"
+                        sx={{
+                            flexShrink: 0,
+                            zIndex: 1200,
+                            bgcolor: '#fff',
+                            px: { xs: 1, sm: 1.25 },
+                            py: { xs: 1, sm: 1 },
+                            borderBottom: '1px solid #e0e0e0',
+                            display: 'flex',
+                            flexDirection: { xs: 'column', sm: 'row' },
+                            alignItems: { xs: 'stretch', sm: 'center' },
+                            justifyContent: 'space-between',
+                            gap: { xs: 1, sm: 1 },
+                        }}
+                    >
+                        <Box
+                            sx={{
+                                display: 'flex',
+                                flexWrap: 'wrap',
+                                alignItems: 'center',
+                                columnGap: 1,
+                                rowGap: 1,
+                                flex: { sm: '1 1 auto' },
+                                minWidth: 0,
+                            }}
+                        >
                             <Button
                                 variant="outlined"
                                 onClick={handleTypeDialogOpen}
-                                style={{ marginRight: '10px', height: '40px' }}
+                                sx={{
+                                    flexShrink: 0,
+                                    height: 40,
+                                    whiteSpace: 'nowrap',
+                                    px: 1.5,
+                                }}
                             >
-                                タイプを選択{filter.length > 0 ? ` (${filter.length})` : ''}
+                                {isNarrow
+                                    ? `タイプ${filter.length > 0 ? ` (${filter.length})` : ''}`
+                                    : `タイプを選択${filter.length > 0 ? ` (${filter.length})` : ''}`}
                             </Button>
-                            <Select
-                                isMulti
-                                options={[
-                                    { value: 1, label: '店内OK' },
-                                    { value: 2, label: '外席OK' },
-                                    { value: 3, label: 'もぐもぐ' }
-                                ]}
-                                onChange={handleCategoryChange}
-                                placeholder="Select category..."
-                                styles={{ container: (provided) => ({ ...provided, height: '40px', marginRight: '10px' }) }}
-                            />
+                            <Box
+                                sx={{
+                                    flex: { xs: '1 1 160px', sm: '0 1 220px' },
+                                    minWidth: { xs: 140, sm: 200 },
+                                    maxWidth: '100%',
+                                }}
+                            >
+                                <Select
+                                    isMulti
+                                    options={[
+                                        { value: 1, label: '店内OK' },
+                                        { value: 2, label: '外席OK' },
+                                        { value: 3, label: 'もぐもぐ' },
+                                    ]}
+                                    onChange={handleCategoryChange}
+                                    placeholder={isNarrow ? 'カテゴリ' : 'カテゴリを選択…'}
+                                    styles={{
+                                        container: (provided) => ({
+                                            ...provided,
+                                            height: '40px',
+                                            marginRight: 0,
+                                            width: '100%',
+                                        }),
+                                        control: (base) => ({
+                                            ...base,
+                                            minHeight: 40,
+                                            height: 40,
+                                        }),
+                                    }}
+                                />
+                            </Box>
                             <FormControlLabel
                                 control={
                                     <Checkbox
                                         checked={isDateTimeFilterEnabled}
                                         onChange={handleDateTimeFilterToggle}
+                                        sx={{ p: 0.75 }}
                                     />
                                 }
                                 label="営業中"
-                                style={{ marginLeft: '0px' }}
+                                sx={{
+                                    marginLeft: 0,
+                                    marginRight: 0,
+                                    flexShrink: 0,
+                                    '& .MuiFormControlLabel-label': { whiteSpace: 'nowrap' },
+                                }}
                             />
                             <LocalizationProvider dateAdapter={AdapterDateFns} locale={jaLocale}>
                                 <DateTimePicker
@@ -366,27 +546,69 @@ const App = () => {
                                     onChange={handleDateTimeChange}
                                     disabled={!isDateTimeFilterEnabled}
                                     slotProps={{
-                                        textField: { style: { marginLeft: '20px', height: '40px' } }
+                                        textField: {
+                                            size: 'small',
+                                            fullWidth: isNarrow,
+                                            sx: {
+                                                ml: { xs: 0, sm: '20px' },
+                                                height: 40,
+                                                minWidth: { xs: 0, sm: 180 },
+                                                maxWidth: { xs: '100%', sm: 280 },
+                                                '& .MuiInputBase-root': { minHeight: 40 },
+                                            },
+                                        },
                                     }}
                                 />
                             </LocalizationProvider>
-                            <Button onClick={handleResetDateTime} style={{ marginLeft: '0px', height: '40px' }}>Now</Button>
+                            <Button
+                                onClick={handleResetDateTime}
+                                sx={{ height: 40, flexShrink: 0, minWidth: 56 }}
+                            >
+                                Now
+                            </Button>
                             <ToggleButtonGroup
                                 value={viewMode}
                                 exclusive
                                 onChange={(_, next) => next && setViewMode(next)}
-                                style={{ marginLeft: 20 }}
+                                sx={{
+                                    flexShrink: 0,
+                                    ml: { xs: 0, sm: 1 },
+                                    '& .MuiToggleButton-root': {
+                                        py: 1,
+                                        px: 1.5,
+                                        minHeight: 40,
+                                        whiteSpace: 'nowrap',
+                                    },
+                                }}
                             >
                                 <ToggleButton value="map">地図</ToggleButton>
                                 <ToggleButton value="list">リスト</ToggleButton>
                             </ToggleButtonGroup>
-                        </div>
-                        <div>
+                        </Box>
+                        <Box
+                            sx={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: { xs: 'space-between', sm: 'flex-end' },
+                                gap: 1,
+                                flexShrink: 0,
+                                flexWrap: 'wrap',
+                            }}
+                        >
                             {user ? (
-                                <div>
-                                    {user.name}
-                                    <button onClick={handleLogout} style={{ marginLeft: '10px' }}>Logout</button>
-                                </div>
+                                <>
+                                    <Typography
+                                        component="span"
+                                        variant="body2"
+                                        noWrap
+                                        sx={{ maxWidth: { xs: 'min(55vw, 220px)', sm: 280 } }}
+                                    >
+                                        {user.name}
+                                    </Typography>
+                                    <Button variant="outlined" size="small" onClick={handleLogout} sx={{ minHeight: 40 }}>
+                                        ログアウト
+                                    </Button>
+                                </>
                             ) : (
                                 <GoogleLogin
                                     onSuccess={handleLoginSuccess}
@@ -394,8 +616,8 @@ const App = () => {
                                     cookiePolicy={'single_host_origin'}
                                 />
                             )}
-                        </div>
-                    </nav>
+                        </Box>
+                    </Box>
                     <Dialog
                         open={isTypeDialogOpen}
                         onClose={handleTypeDialogClose}
@@ -411,7 +633,7 @@ const App = () => {
                                 プリセット
                             </Typography>
                             <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 2 }}>
-                                {TYPE_FILTER_PRESETS.map((preset) => (
+                                {TYPE_FILTER_PRESETS.filter((p) => p.types.length > 0).map((preset) => (
                                     <Button
                                         key={preset.id}
                                         size="small"
@@ -450,9 +672,17 @@ const App = () => {
                             </Button>
                         </DialogActions>
                     </Dialog>
-                    <div style={{ display: 'flex', flex: '1', marginTop: '60px' }}>
+                    <Box
+                        sx={{
+                            flex: 1,
+                            minHeight: 0,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            position: 'relative',
+                        }}
+                    >
                         {viewMode === 'map' ? (
-                            <div style={{ flex: '1', position: 'relative' }}>
+                            <Box sx={{ flex: 1, minHeight: 0, position: 'relative' }}>
                                 <MapComponent
                                     key={viewMode}
                                     places={places}
@@ -461,18 +691,19 @@ const App = () => {
                                     onCenterChange={setPosition}
                                     currentLocation={currentLocation}
                                 />
-                            </div>
+                            </Box>
                         ) : (
-                            <Paper 
-                                elevation={3} 
-                                style={{ 
+                            <Paper
+                                elevation={3}
+                                sx={{
                                     width: '100%',
-                                    maxWidth: '600px',
-                                    margin: '0 auto',
-                                    padding: '20px',
+                                    maxWidth: 600,
+                                    mx: 'auto',
+                                    p: { xs: 1.5, sm: 2.5 },
                                     overflowY: 'auto',
-                                    backgroundColor: '#fff',
-                                    height: 'calc(100vh - 80px)',
+                                    bgcolor: '#fff',
+                                    flex: 1,
+                                    minHeight: 0,
                                     boxSizing: 'border-box',
                                     display: 'flex',
                                     flexDirection: 'column',
@@ -493,7 +724,7 @@ const App = () => {
                                 </div>
                             </Paper>
                         )}
-                    </div>
+                    </Box>
                 </div>
             </LoadScript>
         </GoogleOAuthProvider>

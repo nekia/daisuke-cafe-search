@@ -21,7 +21,7 @@ def get_place_details(place_id, api_key):
     url = f"https://places.googleapis.com/v1/places/{place_id}?languageCode=ja"
     headers = {
         "Content-Type": "application/json",
-        "X-Goog-FieldMask": "displayName,primaryTypeDisplayName,googleMapsUri,id,location,formattedAddress,businessStatus,currentOpeningHours",
+        "X-Goog-FieldMask": "displayName,primaryType,primaryTypeDisplayName,googleMapsUri,id,location,formattedAddress,businessStatus,currentOpeningHours",
         "X-Goog-Api-Key": api_key,
     }
 
@@ -45,6 +45,7 @@ def register_place_to_mongodb(place_data, category, alias=None):
         "id": place_data.get('id'),
         "location_name": place_data.get('displayName'),
         "primary_type": place_data.get('primaryTypeDisplayName'),
+        "primary_type_api": place_data.get('primaryType'),
         "url": place_data.get('googleMapsUri'),
         "location": place_data.get('location'),
         "category": category,

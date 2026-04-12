@@ -138,4 +138,6 @@ node_modules/
 .firebase/
 
 *.json
+!primary_type_text.json
+!place-map-app/src/data/primary_type_text.json
 *.txt
