@@ -24,3 +24,6 @@ steps:
 images:
   - ${_BACKEND_IMAGE}:${SHORT_SHA}
   - ${_BACKEND_IMAGE}:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY
