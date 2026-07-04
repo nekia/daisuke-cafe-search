@@ -64,6 +64,7 @@ const placeSchema = new mongoose.Schema({
         languageCode: String
     },
     address: String,
+    formattedAddress: String,
     alias: String,
     businessStatus: String,
     primary_type: {
@@ -83,7 +84,19 @@ const placeSchema = new mongoose.Schema({
         default: null
     },
     openingHoursStatus: String,
-    category: Number
+    category: Number,
+    refreshMeta: {
+        refreshBucket: Number,
+        lastEnterpriseSyncAt: Date,
+        businessStatusSyncedAt: Date,
+        openingHoursSyncedAt: Date,
+        nextEligibleAt: Date,
+        lastEnterpriseStatus: String
+    },
+    enterpriseData: {
+        latestSnapshot: mongoose.Schema.Types.Mixed,
+        searchableTexts: [String]
+    }
 });
 
 const Place = db.model('Place', placeSchema, 'place_info');
@@ -114,11 +127,12 @@ const verifyToken = async (req, res, next) => {
 
 app.get('/places', verifyToken, async (req, res) => {
     let query = {};
+    const andConditions = [];
     let checkOpenDate = false;
     let specificDateTime = null;
 
-    // CLOSED_PERMANENTLYのレコードを除外
-    query['businessStatus'] = { $ne: 'CLOSED_PERMANENTLY' };
+    // 閉業・臨時休業のレコードを除外
+    query['businessStatus'] = { $nin: ['CLOSED_PERMANENTLY', 'CLOSED_TEMPORARILY'] };
 
     if (req.query) {
         const primary_type = req.query.primary_type;
@@ -126,10 +140,12 @@ app.get('/places', verifyToken, async (req, res) => {
             const typeList = Array.isArray(primary_type) && primary_type.length > 0
                 ? primary_type
                 : [primary_type];
-            query.$or = [
+            andConditions.push({
+                $or: [
                 { primary_type_api: { $in: typeList } },
                 { 'primary_type.text': { $in: typeList } },
-            ];
+                ]
+            });
             console.log('primary_type filter', typeList);
         }
 
@@ -147,6 +163,37 @@ app.get('/places', verifyToken, async (req, res) => {
             specificDateTime = new Date(req.query.dateTime);
             checkOpenDate = true;
         }
+
+        const keyword = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+        if (keyword) {
+            const tokens = keyword
+                .split(/[\s\u3000]+/)
+                .map((token) => token.trim())
+                .filter(Boolean);
+
+            const tokenConditions = tokens.map((token) => {
+                const safeRegex = new RegExp(escapeRegex(token), 'i');
+                return {
+                    $or: [
+                        { 'location_name.text': safeRegex },
+                        { alias: safeRegex },
+                        { address: safeRegex },
+                        { formattedAddress: safeRegex },
+                        { 'primary_type.text': safeRegex },
+                        { primary_type_api: safeRegex },
+                        { 'enterpriseData.searchableTexts': safeRegex }
+                    ]
+                };
+            });
+
+            if (tokenConditions.length > 0) {
+                andConditions.push(...tokenConditions);
+            }
+        }
+    }
+
+    if (andConditions.length > 0) {
+        query.$and = andConditions;
     }
 
     let places = await Place.find(query);
@@ -171,7 +218,7 @@ app.get('/places', verifyToken, async (req, res) => {
 app.get('/primary_types', verifyToken, async (req, res) => {
     /** 表示は従来どおり primary_type.text の一意一覧（チェックボックスの value と一致させる） */
     const primaryTypes = await Place.distinct('primary_type.text', {
-        businessStatus: { $ne: 'CLOSED_PERMANENTLY' },
+        businessStatus: { $nin: ['CLOSED_PERMANENTLY', 'CLOSED_TEMPORARILY'] },
     });
     console.log(primaryTypes.length, 'distinct primary_type.text');
     res.json(primaryTypes);
@@ -213,3 +260,5 @@ const isOpenNow = (openingHours, specificDateTime) => {
     }
     return false;
 };
+
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

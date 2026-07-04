@@ -1,188 +1,295 @@
-import os
-import requests
 import json
+import os
+import time
+from datetime import timedelta
+
+import requests
 from dotenv import load_dotenv
 from pymongo import MongoClient
-import time
+
+from enterprise_refresh_utils import (
+    compute_remaining_budget,
+    ensure_refresh_meta_base,
+    get_bucket_count,
+    get_day_key,
+    get_month_key,
+    get_next_bucket,
+    get_env_int,
+    increment_usage,
+    next_eligible_at,
+    utc_now,
+)
 
 load_dotenv()
 
-def get_business_status(place_id, api_key):
-    """business_status情報を取得する関数"""
+BASE_FIELD_MASK = ",".join(
+    [
+        "businessStatus",
+        "currentOpeningHours",
+        "displayName",
+        "formattedAddress",
+        "primaryType",
+        "primaryTypeDisplayName",
+        "generativeSummary",
+        "reviewSummary",
+    ]
+)
+
+
+def build_searchable_texts(payload, record):
+    values = [
+        (record.get("location_name") or {}).get("text"),
+        record.get("alias"),
+        record.get("address"),
+        record.get("formattedAddress"),
+        (record.get("primary_type") or {}).get("text"),
+        record.get("primary_type_api"),
+        payload.get("displayName", {}).get("text"),
+        payload.get("formattedAddress"),
+        payload.get("primaryTypeDisplayName", {}).get("text"),
+        payload.get("primaryType"),
+        payload.get("generativeSummary", {}).get("description", {}).get("text"),
+        payload.get("reviewSummary", {}).get("text"),
+    ]
+    unique = []
+    for value in values:
+        if isinstance(value, str):
+            text = value.strip()
+            if text and text not in unique:
+                unique.append(text)
+    return unique
+
+
+def get_place_payload(place_id, api_key):
+    extra_mask = os.getenv("PLACES_ENTERPRISE_EXTRA_FIELDS", "").strip()
+    full_mask = BASE_FIELD_MASK if not extra_mask else f"{BASE_FIELD_MASK},{extra_mask}"
     url = f"https://places.googleapis.com/v1/places/{place_id}?languageCode=ja"
-    headers = {
-        "Content-Type": "application/json",
-        "X-Goog-FieldMask": "businessStatus",
-        "X-Goog-Api-Key": api_key,
+
+    def fetch(field_mask):
+        headers = {
+            "Content-Type": "application/json",
+            "X-Goog-FieldMask": field_mask,
+            "X-Goog-Api-Key": api_key,
+        }
+        max_retries = max(get_env_int("ENTERPRISE_RETRY_COUNT", 3), 1)
+        backoff_sec = max(get_env_int("ENTERPRISE_BACKOFF_SECONDS", 2), 1)
+        for attempt in range(max_retries):
+            response = requests.get(url, headers=headers, timeout=30)
+            if response.status_code == 200:
+                return response.json(), None
+            if response.status_code in (429, 500, 502, 503, 504):
+                sleep_seconds = backoff_sec * (2**attempt)
+                print(f"retrying {place_id} status={response.status_code} sleep={sleep_seconds}s")
+                time.sleep(sleep_seconds)
+                continue
+            return None, response
+        return None, response
+
+    payload, error_response = fetch(full_mask)
+    if payload:
+        return payload
+
+    if extra_mask and error_response is not None and error_response.status_code == 400:
+        print(f"fallback field mask for {place_id} because extra fields failed")
+        payload, _ = fetch(BASE_FIELD_MASK)
+        return payload
+
+    if error_response is not None:
+        print(f"API error for {place_id}: status={error_response.status_code} body={error_response.text}")
+    return None
+
+
+def pick_candidates(collection, run_bucket, allowed_calls, stale_days):
+    now = utc_now()
+    stale_threshold = now - timedelta(days=stale_days)
+    common_eligibility = {
+        "$or": [
+            {"refreshMeta.nextEligibleAt": {"$lte": now}},
+            {"refreshMeta.nextEligibleAt": {"$exists": False}},
+        ]
     }
-    
-    try:
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            result = response.json()
-            business_status = result.get('businessStatus')
-            if business_status:
-                print(f"✓ business_statusを取得しました: {place_id} - {business_status}")
-                return business_status
-            else:
-                print(f"⚠ business_status情報がありません: {place_id}")
-                return None
-        else:
-            print(f"❌ API呼び出しエラー: {place_id} - Status: {response.status_code}")
-            print(f"Response: {response.text}")
-            return None
-    except Exception as e:
-        print(f"❌ エラーが発生しました: {place_id} - {str(e)}")
-        return None
+    bucket_filter = {
+        "$or": [
+            {"refreshMeta.refreshBucket": run_bucket},
+            {"refreshMeta.refreshBucket": {"$exists": False}},
+        ]
+    }
+
+    query_missing = {
+        "$and": [
+            common_eligibility,
+            bucket_filter,
+            {
+                "$or": [
+                    {"businessStatus": {"$exists": False}},
+                    {"businessStatus": None},
+                ]
+            },
+        ]
+    }
+    query_stale = {
+        "$and": [
+            common_eligibility,
+            bucket_filter,
+            {"businessStatus": {"$ne": "CLOSED_PERMANENTLY"}},
+            {
+                "$or": [
+                    {"refreshMeta.businessStatusSyncedAt": {"$exists": False}},
+                    {"refreshMeta.businessStatusSyncedAt": {"$lt": stale_threshold}},
+                ]
+            },
+        ]
+    }
+
+    picked = []
+    seen = set()
+    for query in (query_missing, query_stale):
+        for record in collection.find(query).limit(max(allowed_calls * 5, 20)):
+            record_id = str(record.get("_id"))
+            if record_id in seen:
+                continue
+            seen.add(record_id)
+            picked.append(record)
+            if len(picked) >= allowed_calls:
+                return picked
+    return picked
+
 
 def update_closed_business_status():
-    """閉業店舗（CLOSED_PERMANENTLY）のbusiness_statusを更新する"""
-    
-    # MongoDB接続
     client = MongoClient(os.environ["MONGODB_ADDRESS"])
     db = client.places
     collection = db.place_info
-    
-    # Google APIキー
+    usage_collection = db.api_usage_counters
+    state_collection = db.refresh_state
     api_key = os.environ["GOOGLE_MAPS_API_KEY"]
-    
-    # 閉業店舗リストを保存するためのリスト
+
     closed_businesses = []
-    
+
     try:
-        # businessStatusが未設定またはCLOSED_PERMANENTLYでないレコードを検索
-        query_condition = {
-            "$or": [
-                {"businessStatus": {"$exists": False}},
-                {"businessStatus": {"$ne": "CLOSED_PERMANENTLY"}}
-            ]
-        }
-        
-        records_to_check = collection.find(query_condition)
-        
-        # 全レコード数を確認
-        all_records_count = collection.count_documents({})
-        
-        # レコード数を確認
-        total_count = collection.count_documents(query_condition)
-        
-        print(f"📊 データベース統計:")
-        print(f"   • 全レコード数: {all_records_count}件")
-        print(f"   • business_status確認対象レコード数: {total_count}件")
-        print(f"   • 既に閉業としてマーキング済みレコード数: {all_records_count - total_count}件")
-        
-        if total_count == 0:
-            print("✓ すべてのレコードのbusiness_statusが確認済みです")
+        now = utc_now()
+        budget = compute_remaining_budget(usage_collection, now)
+        bucket_count = get_bucket_count()
+        run_bucket = get_next_bucket(state_collection, "business_status_refresh", bucket_count)
+        stale_days = get_env_int("BUSINESS_STATUS_STALE_DAYS", 30)
+        cooldown_hours_ok = get_env_int("ENTERPRISE_COOLDOWN_HOURS", 72)
+        cooldown_hours_fail = get_env_int("ENTERPRISE_FAILURE_COOLDOWN_HOURS", 24)
+
+        print("=== Budget status ===")
+        print(
+            f"month used={budget['monthly_used']} remaining={budget['monthly_remaining']} "
+            f"(limit={budget['limits']['monthly']})"
+        )
+        print(
+            f"day used={budget['daily_used']} remaining={budget['daily_remaining']} "
+            f"(limit={budget['limits']['daily']})"
+        )
+        print(f"run allowance={budget['allowed_calls_this_run']}")
+        print(f"run bucket={run_bucket}/{bucket_count - 1}")
+
+        if budget["allowed_calls_this_run"] <= 0:
+            print("No available budget. Exit without API calls.")
             return
-        
-        print("=" * 60)
-        
+
+        records_to_check = pick_candidates(collection, run_bucket, budget["allowed_calls_this_run"], stale_days)
+        if not records_to_check:
+            print("No eligible records for this bucket.")
+            return
+
         updated_count = 0
         closed_count = 0
         failed_count = 0
-        
+        api_calls = 0
+
         for i, record in enumerate(records_to_check, 1):
-            place_id = record.get('id')
-            location_name = record.get('location_name', {}).get('text', 'N/A')
-            alias = record.get('alias', 'N/A')
-            
-            # print(f"[{i}/{total_count}] 処理中: {location_name} (alias: {alias})")
-            
+            place_id = record.get("id")
+            location_name = record.get("location_name", {}).get("text", "N/A")
+            alias = record.get("alias", "N/A")
+
             if not place_id:
-                print(f"⚠ Place IDが見つかりません: {location_name}")
+                print(f"missing place_id: {location_name}")
                 failed_count += 1
                 continue
-            
-            # テスト用: 最初の1件のみ処理
-            # if i > 1:
-            #     print(f"⚠ テスト用: 1件のみ処理するためスキップ: {location_name}")
-            #     continue
-            
-            # business_statusを取得
-            business_status = get_business_status(place_id, api_key)
-            
-            if business_status:
-                # business_status情報を取得できた場合
-                update_data = {
-                    "businessStatus": business_status
-                }
-                
-                # 閉業の場合はカウントを増やす
-                if business_status == "CLOSED_PERMANENTLY":
-                    closed_count += 1
-                    print(f"✓ 閉業店舗を発見: {location_name}")
-                    
-                    # 閉業店舗の情報をリストに追加
-                    address = record.get('address', '住所情報なし')
-                    closed_businesses.append({
-                        'name': location_name,
-                        'address': address,
-                        'alias': alias,
-                        'place_id': place_id
-                    })
-                
-                # MongoDB更新を実行
-                result = collection.update_one(
-                    {"_id": record["_id"]},
-                    {"$set": update_data}
-                )
-                
-                if result.modified_count > 0:
-                    updated_count += 1
-                    print(f"✓ business_status更新完了: {location_name}")
-                else:
-                    print(f"⚠ 更新失敗: {location_name}")
-                    failed_count += 1
-            else:
-                print(f"⚠ business_status取得失敗: {location_name}")
+
+            if str(place_id).startswith("import-"):
+                print(f"skip import stub: {location_name}")
+                continue
+
+            ensure_refresh_meta_base(collection, record, now)
+            payload = get_place_payload(place_id, api_key)
+            increment_usage(usage_collection, "month", get_month_key(now), 1)
+            increment_usage(usage_collection, "day", get_day_key(now), 1)
+            api_calls += 1
+
+            if not payload:
                 failed_count += 1
-            
-            # API制限を考慮して少し待機
+                collection.update_one(
+                    {"_id": record["_id"]},
+                    {
+                        "$set": {
+                            "refreshMeta.lastEnterpriseSyncAt": now,
+                            "refreshMeta.lastEnterpriseStatus": "error",
+                            "refreshMeta.nextEligibleAt": next_eligible_at(now, cooldown_hours_fail),
+                        }
+                    },
+                )
+                continue
+
+            business_status = payload.get("businessStatus")
+            searchable_texts = build_searchable_texts(payload, record)
+            update_data = {
+                "refreshMeta.lastEnterpriseSyncAt": now,
+                "refreshMeta.businessStatusSyncedAt": now,
+                "refreshMeta.lastEnterpriseStatus": "ok",
+                "refreshMeta.nextEligibleAt": next_eligible_at(now, cooldown_hours_ok),
+                "enterpriseData.latestSnapshot": payload,
+                "enterpriseData.searchableTexts": searchable_texts,
+            }
+            if business_status:
+                update_data["businessStatus"] = business_status
+
+            result = collection.update_one({"_id": record["_id"]}, {"$set": update_data})
+            if result.acknowledged:
+                updated_count += 1
+                print(f"[{i}/{len(records_to_check)}] updated: {location_name} ({business_status})")
+            else:
+                failed_count += 1
+
+            if business_status == "CLOSED_PERMANENTLY":
+                closed_count += 1
+                closed_businesses.append(
+                    {
+                        "name": location_name,
+                        "address": record.get("address", "住所情報なし"),
+                        "alias": alias,
+                        "place_id": place_id,
+                    }
+                )
+
             time.sleep(0.1)
-            
-            print("-" * 40)
-        
+
         print("=" * 60)
-        print(f"📊 処理結果:")
-        print(f"   • 総対象レコード数: {total_count}件")
-        print(f"   • 更新成功: {updated_count}件")
-        print(f"   • 閉業店舗としてマーキング: {closed_count}件")
-        print(f"   • 更新失敗: {failed_count}件")
+        print("処理結果:")
+        print(f"  対象件数: {len(records_to_check)}")
+        print(f"  API呼び出し数: {api_calls}")
+        print(f"  更新成功: {updated_count}")
+        print(f"  閉業店舗: {closed_count}")
+        print(f"  失敗: {failed_count}")
         print("=" * 60)
-        
-        # 閉業店舗リストをファイルに保存
+
         if closed_businesses:
             timestamp = time.strftime("%Y%m%d_%H%M%S")
             filename = f"closed_businesses_{timestamp}.json"
-            
-            with open(filename, 'w', encoding='utf-8') as f:
+            with open(filename, "w", encoding="utf-8") as f:
                 json.dump(closed_businesses, f, ensure_ascii=False, indent=2)
-            
-            print(f"📄 閉業店舗リストを保存しました: {filename}")
-            print(f"   • 保存件数: {len(closed_businesses)}件")
-            
-            # テキストファイルでも保存（読みやすい形式）
-            txt_filename = f"closed_businesses_{timestamp}.txt"
-            with open(txt_filename, 'w', encoding='utf-8') as f:
-                f.write(f"閉業店舗一覧 ({len(closed_businesses)}件)\n")
-                f.write("=" * 50 + "\n\n")
-                for i, business in enumerate(closed_businesses, 1):
-                    f.write(f"{i}. {business['name']}\n")
-                    f.write(f"   住所: {business['address']}\n")
-                    f.write(f"   エイリアス: {business['alias']}\n")
-                    f.write(f"   Place ID: {business['place_id']}\n")
-                    f.write("-" * 30 + "\n")
-            
-            print(f"📄 閉業店舗リスト（テキスト形式）を保存しました: {txt_filename}")
-        else:
-            print("📄 閉業店舗は見つかりませんでした")
-        
+            print(f"closed list saved: {filename}")
+
     except Exception as e:
-        print(f"❌ 処理中にエラーが発生しました: {str(e)}")
+        print(f"processing failed: {str(e)}")
     finally:
         client.close()
 
+
 if __name__ == "__main__":
-    print("🔄 business_status情報の更新を開始します...")
+    print("business_status情報の更新を開始します...")
     update_closed_business_status()
-    print("✅ 処理が完了しました") 
+    print("処理が完了しました")

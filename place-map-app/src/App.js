@@ -26,6 +26,7 @@ import Typography from '@mui/material/Typography';
 import ToggleButton from '@mui/material/ToggleButton';
 import ToggleButtonGroup from '@mui/material/ToggleButtonGroup';
 import Box from '@mui/material/Box';
+import TextField from '@mui/material/TextField';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { LoadScript } from '@react-google-maps/api';
 import primaryTypeTextCatalog from './data/primary_type_text.json';
@@ -207,6 +208,8 @@ const App = () => {
     const [user, setUser] = useState(null);
     const [token, setToken] = useState(null);
     const [isTypeDialogOpen, setIsTypeDialogOpen] = useState(false);
+    const [keywordInput, setKeywordInput] = useState('');
+    const [keyword, setKeyword] = useState('');
     /** タイプ選択ダイアログ内の下書き（確定までマップに反映しない） */
     const [typeFilterDraft, setTypeFilterDraft] = useState([]);
     const backendEndpoint = process.env.REACT_APP_BACKEND_ENDPOINT;
@@ -240,13 +243,24 @@ const App = () => {
         }
     }, []);
 
-    const fetchPlaces = useCallback((types, categoryArg, dateTime) => {
-        let query = types.map(type => `primary_type=${type}`).join('&');
-        query += '&'
-        query += categoryArg.map(cat => `category=${cat}`).join('&');
+    useEffect(() => {
+        const timer = window.setTimeout(() => {
+            setKeyword(keywordInput.trim());
+        }, 400);
+        return () => window.clearTimeout(timer);
+    }, [keywordInput]);
+
+    const fetchPlaces = useCallback((types, categoryArg, dateTime, keywordArg) => {
+        const queryParams = [];
+        types.forEach((type) => queryParams.push(`primary_type=${encodeURIComponent(type)}`));
+        categoryArg.forEach((cat) => queryParams.push(`category=${encodeURIComponent(cat)}`));
         if (dateTime) {
-            query += `&dateTime=${dateTime.toISOString()}`;
+            queryParams.push(`dateTime=${encodeURIComponent(dateTime.toISOString())}`);
         }
+        if (keywordArg) {
+            queryParams.push(`q=${encodeURIComponent(keywordArg)}`);
+        }
+        const query = queryParams.join('&');
         fetch(`${backendEndpoint}/places?${query}`, {
             headers: {
                 'Authorization': `Bearer ${token}`
@@ -275,10 +289,10 @@ const App = () => {
     useEffect(() => {
         console.log(`backendEndpoint: ${backendEndpoint}`)
         if (token) {
-            fetchPlaces(filter, category, isDateTimeFilterEnabled ? selectedDateTime : null);
+            fetchPlaces(filter, category, isDateTimeFilterEnabled ? selectedDateTime : null, keyword);
             fetchPrimaryTypes();
         }
-    }, [token, backendEndpoint, category, filter, isDateTimeFilterEnabled, selectedDateTime, fetchPlaces, fetchPrimaryTypes]);
+    }, [token, backendEndpoint, category, filter, isDateTimeFilterEnabled, selectedDateTime, keyword, fetchPlaces, fetchPrimaryTypes]);
 
     const handleCategoryChange = (selectedOptions) => {
         const selectedValues = selectedOptions ? selectedOptions.map(option => option.value) : [];
@@ -493,6 +507,17 @@ const App = () => {
                                     ? `タイプ${filter.length > 0 ? ` (${filter.length})` : ''}`
                                     : `タイプを選択${filter.length > 0 ? ` (${filter.length})` : ''}`}
                             </Button>
+                            <TextField
+                                size="small"
+                                value={keywordInput}
+                                onChange={(event) => setKeywordInput(event.target.value)}
+                                placeholder={isNarrow ? 'キーワード' : '店名/住所/タイプで検索'}
+                                sx={{
+                                    minWidth: { xs: 140, sm: 220 },
+                                    flex: { xs: '1 1 180px', sm: '0 1 280px' },
+                                    '& .MuiInputBase-root': { minHeight: 40 },
+                                }}
+                            />
                             <Box
                                 sx={{
                                     flex: { xs: '1 1 160px', sm: '0 1 220px' },
