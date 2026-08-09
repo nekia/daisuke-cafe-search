@@ -96,6 +96,19 @@ const MapComponent = ({ places = [], categoryColors, center, onCenterChange, cur
                 >
                     <div>
                         {selected.location_name?.text || '店舗名なし'}<br/>
+                        {(selected.businessStatus === 'CLOSED_PERMANENTLY' ||
+                          selected.businessStatus === 'CLOSED_TEMPORARILY') && (
+                            <>
+                                <span style={{ color: '#c62828', fontWeight: 600 }}>
+                                    {selected.refreshMeta?.placeIdInvalid
+                                        ? '閉業（Place ID無効）'
+                                        : selected.businessStatus === 'CLOSED_PERMANENTLY'
+                                          ? '閉業'
+                                          : '臨時休業'}
+                                </span>
+                                <br/>
+                            </>
+                        )}
                         {selected.url && (
                             <a href={selected.url} target="_blank" rel="noopener noreferrer">詳細</a>
                         )}

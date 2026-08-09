@@ -91,7 +91,11 @@ const placeSchema = new mongoose.Schema({
         businessStatusSyncedAt: Date,
         openingHoursSyncedAt: Date,
         nextEligibleAt: Date,
-        lastEnterpriseStatus: String
+        lastEnterpriseStatus: String,
+        lastProStatusSyncAt: Date,
+        lastProStatus: String,
+        placeIdInvalid: Boolean,
+        placeIdInvalidAt: Date
     },
     enterpriseData: {
         latestSnapshot: mongoose.Schema.Types.Mixed,
@@ -125,14 +129,30 @@ const verifyToken = async (req, res, next) => {
     }
 };
 
+const CLOSED_BUSINESS_STATUSES = ['CLOSED_PERMANENTLY', 'CLOSED_TEMPORARILY'];
+
+const isClosedOnlyQuery = (value) => {
+    if (Array.isArray(value)) {
+        return value.some((item) => isClosedOnlyQuery(item));
+    }
+    if (typeof value !== 'string') {
+        return false;
+    }
+    const normalized = value.trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes';
+};
+
 app.get('/places', verifyToken, async (req, res) => {
     let query = {};
     const andConditions = [];
     let checkOpenDate = false;
     let specificDateTime = null;
+    const closedOnly = isClosedOnlyQuery(req.query?.closedOnly);
 
-    // 閉業・臨時休業のレコードを除外
-    query['businessStatus'] = { $nin: ['CLOSED_PERMANENTLY', 'CLOSED_TEMPORARILY'] };
+    // 既定は営業中のみ。closedOnly=true なら閉業・臨時休業のみ
+    query['businessStatus'] = closedOnly
+        ? { $in: CLOSED_BUSINESS_STATUSES }
+        : { $nin: CLOSED_BUSINESS_STATUSES };
 
     if (req.query) {
         const primary_type = req.query.primary_type;
@@ -159,7 +179,8 @@ app.get('/places', verifyToken, async (req, res) => {
             console.log(query.category)
         }
 
-        if (req.query.dateTime) {
+        // 閉業のみ表示時は「営業中」時刻フィルタは意味がないので無視
+        if (req.query.dateTime && !closedOnly) {
             specificDateTime = new Date(req.query.dateTime);
             checkOpenDate = true;
         }
@@ -211,16 +232,19 @@ app.get('/places', verifyToken, async (req, res) => {
         places = places.filter(place => place.isOpenNow);
     }
 
-    console.log("Length of places :" + places.length)
+    console.log("Length of places :" + places.length + (closedOnly ? ' (closedOnly)' : ''))
     res.json(places);
 });
 
 app.get('/primary_types', verifyToken, async (req, res) => {
     /** 表示は従来どおり primary_type.text の一意一覧（チェックボックスの value と一致させる） */
+    const closedOnly = isClosedOnlyQuery(req.query?.closedOnly);
     const primaryTypes = await Place.distinct('primary_type.text', {
-        businessStatus: { $nin: ['CLOSED_PERMANENTLY', 'CLOSED_TEMPORARILY'] },
+        businessStatus: closedOnly
+            ? { $in: CLOSED_BUSINESS_STATUSES }
+            : { $nin: CLOSED_BUSINESS_STATUSES },
     });
-    console.log(primaryTypes.length, 'distinct primary_type.text');
+    console.log(primaryTypes.length, 'distinct primary_type.text', closedOnly ? '(closedOnly)' : '');
     res.json(primaryTypes);
 });
 

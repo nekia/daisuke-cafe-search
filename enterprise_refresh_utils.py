@@ -36,6 +36,22 @@ def get_budget_limits():
     }
 
 
+def get_pro_budget_limits():
+    """Place Details Pro 向け。無料枠(約5000/月)を超えないよう既定は余裕を持たせる。
+
+    日次上限は設けない（月次・ハードキャップ・1実行上限のみ）。
+    """
+    hard_cap = max(get_env_int("PRO_HARD_MONTHLY_CAP", 5000), 0)
+    monthly = get_env_int("MONTHLY_PRO_CALL_BUDGET", 4500)
+    if hard_cap > 0:
+        monthly = min(monthly, hard_cap)
+    return {
+        "monthly": monthly,
+        "per_run": get_env_int("PRO_PER_RUN_MAX_CALLS", 50),
+        "hard_monthly_cap": hard_cap,
+    }
+
+
 def get_bucket_count():
     return max(get_env_int("REFRESH_BUCKET_COUNT", 30), 1)
 
@@ -110,6 +126,36 @@ def compute_remaining_budget(usage_collection, now):
         "daily_remaining": daily_remaining,
         "allowed_calls_this_run": allowed,
     }
+
+
+def compute_remaining_pro_budget(usage_collection, now, per_run_override=None):
+    """Enterprise と別カウンタで Pro SKU の無料枠超過を防ぐ。日次制限なし。
+
+    per_run_override: 1実行あたり上限を上書き（CLI --per-run 用）。None なら環境変数既定。
+    """
+    limits = get_pro_budget_limits()
+    if per_run_override is not None:
+        limits = {**limits, "per_run": max(int(per_run_override), 0)}
+    monthly_used = get_usage_count(usage_collection, "pro_month", get_month_key(now))
+    hard_cap = limits.get("hard_monthly_cap") or 0
+    effective_monthly_limit = limits["monthly"]
+    if hard_cap > 0:
+        # 設定ミスでも無料枠ハードキャップを超えない
+        effective_monthly_limit = min(effective_monthly_limit, hard_cap)
+        monthly_remaining = max(effective_monthly_limit - monthly_used, 0)
+    else:
+        monthly_remaining = max(effective_monthly_limit - monthly_used, 0)
+    allowed = min(monthly_remaining, limits["per_run"])
+    return {
+        "limits": {**limits, "monthly": effective_monthly_limit},
+        "monthly_used": monthly_used,
+        "monthly_remaining": monthly_remaining,
+        "allowed_calls_this_run": allowed,
+    }
+
+
+def increment_pro_usage(usage_collection, now, amount=1):
+    increment_usage(usage_collection, "pro_month", get_month_key(now), amount)
 
 
 def mark_refresh_result(collection, record_id, result_fields):

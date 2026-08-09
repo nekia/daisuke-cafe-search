@@ -28,7 +28,23 @@ const PlaceCard = ({ place, distance, onClick }) => {
         <Typography variant="body2" style={{ marginBottom: '8px' }}>
           距離: {distance.toFixed(1)} km
         </Typography>
-        {place.openingHours && (
+        {(place.businessStatus === 'CLOSED_PERMANENTLY' ||
+          place.businessStatus === 'CLOSED_TEMPORARILY') && (
+          <Typography
+            variant="body2"
+            color="error.main"
+            style={{ fontWeight: 'bold', marginBottom: '8px' }}
+          >
+            {place.refreshMeta?.placeIdInvalid
+              ? '閉業（Place ID無効）'
+              : place.businessStatus === 'CLOSED_PERMANENTLY'
+                ? '閉業'
+                : '臨時休業'}
+          </Typography>
+        )}
+        {place.openingHours &&
+          place.businessStatus !== 'CLOSED_PERMANENTLY' &&
+          place.businessStatus !== 'CLOSED_TEMPORARILY' && (
           <Typography 
             variant="body2" 
             color={place.openingHours.openNow ? 'success.main' : 'error.main'}

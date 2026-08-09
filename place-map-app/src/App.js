@@ -204,7 +204,7 @@ const App = () => {
     const [category, setCategory] = useState(['1', '2']);
     const [selectedDateTime, setSelectedDateTime] = useState(new Date());
     const [isDateTimeFilterEnabled, setIsDateTimeFilterEnabled] = useState(true);
-    // const [showOpenNow, setShowOpenNow] = useState(false);
+    const [showClosedOnly, setShowClosedOnly] = useState(false);
     const [user, setUser] = useState(null);
     const [token, setToken] = useState(null);
     const [isTypeDialogOpen, setIsTypeDialogOpen] = useState(false);
@@ -250,15 +250,18 @@ const App = () => {
         return () => window.clearTimeout(timer);
     }, [keywordInput]);
 
-    const fetchPlaces = useCallback((types, categoryArg, dateTime, keywordArg) => {
+    const fetchPlaces = useCallback((types, categoryArg, dateTime, keywordArg, closedOnly) => {
         const queryParams = [];
         types.forEach((type) => queryParams.push(`primary_type=${encodeURIComponent(type)}`));
         categoryArg.forEach((cat) => queryParams.push(`category=${encodeURIComponent(cat)}`));
-        if (dateTime) {
+        if (dateTime && !closedOnly) {
             queryParams.push(`dateTime=${encodeURIComponent(dateTime.toISOString())}`);
         }
         if (keywordArg) {
             queryParams.push(`q=${encodeURIComponent(keywordArg)}`);
+        }
+        if (closedOnly) {
+            queryParams.push('closedOnly=true');
         }
         const query = queryParams.join('&');
         fetch(`${backendEndpoint}/places?${query}`, {
@@ -270,8 +273,9 @@ const App = () => {
             .then(data => setPlaces(data));
     }, [token, backendEndpoint]);
 
-    const fetchPrimaryTypes = useCallback(() => {
-        fetch(`${backendEndpoint}/primary_types`, {
+    const fetchPrimaryTypes = useCallback((closedOnly) => {
+        const query = closedOnly ? '?closedOnly=true' : '';
+        fetch(`${backendEndpoint}/primary_types${query}`, {
             headers: {
                 'Authorization': `Bearer ${token}`
             }
@@ -289,10 +293,27 @@ const App = () => {
     useEffect(() => {
         console.log(`backendEndpoint: ${backendEndpoint}`)
         if (token) {
-            fetchPlaces(filter, category, isDateTimeFilterEnabled ? selectedDateTime : null, keyword);
-            fetchPrimaryTypes();
+            fetchPlaces(
+                filter,
+                category,
+                isDateTimeFilterEnabled ? selectedDateTime : null,
+                keyword,
+                showClosedOnly
+            );
+            fetchPrimaryTypes(showClosedOnly);
         }
-    }, [token, backendEndpoint, category, filter, isDateTimeFilterEnabled, selectedDateTime, keyword, fetchPlaces, fetchPrimaryTypes]);
+    }, [
+        token,
+        backendEndpoint,
+        category,
+        filter,
+        isDateTimeFilterEnabled,
+        selectedDateTime,
+        keyword,
+        showClosedOnly,
+        fetchPlaces,
+        fetchPrimaryTypes,
+    ]);
 
     const handleCategoryChange = (selectedOptions) => {
         const selectedValues = selectedOptions ? selectedOptions.map(option => option.value) : [];
@@ -326,7 +347,23 @@ const App = () => {
     };
     
     const handleDateTimeFilterToggle = () => {
-        setIsDateTimeFilterEnabled((prev) => !prev);
+        setIsDateTimeFilterEnabled((prev) => {
+            const next = !prev;
+            if (next) {
+                setShowClosedOnly(false);
+            }
+            return next;
+        });
+    };
+
+    const handleClosedOnlyToggle = () => {
+        setShowClosedOnly((prev) => {
+            const next = !prev;
+            if (next) {
+                setIsDateTimeFilterEnabled(false);
+            }
+            return next;
+        });
     };
     
     const handleResetDateTime = () => {
@@ -554,6 +591,7 @@ const App = () => {
                                     <Checkbox
                                         checked={isDateTimeFilterEnabled}
                                         onChange={handleDateTimeFilterToggle}
+                                        disabled={showClosedOnly}
                                         sx={{ p: 0.75 }}
                                     />
                                 }
@@ -565,11 +603,27 @@ const App = () => {
                                     '& .MuiFormControlLabel-label': { whiteSpace: 'nowrap' },
                                 }}
                             />
+                            <FormControlLabel
+                                control={
+                                    <Checkbox
+                                        checked={showClosedOnly}
+                                        onChange={handleClosedOnlyToggle}
+                                        sx={{ p: 0.75 }}
+                                    />
+                                }
+                                label="閉業のみ"
+                                sx={{
+                                    marginLeft: 0,
+                                    marginRight: 0,
+                                    flexShrink: 0,
+                                    '& .MuiFormControlLabel-label': { whiteSpace: 'nowrap' },
+                                }}
+                            />
                             <LocalizationProvider dateAdapter={AdapterDateFns} locale={jaLocale}>
                                 <DateTimePicker
                                     value={selectedDateTime}
                                     onChange={handleDateTimeChange}
-                                    disabled={!isDateTimeFilterEnabled}
+                                    disabled={!isDateTimeFilterEnabled || showClosedOnly}
                                     slotProps={{
                                         textField: {
                                             size: 'small',
@@ -735,7 +789,7 @@ const App = () => {
                                 }}
                             >
                                 <Typography variant="h6" gutterBottom style={{ marginBottom: '20px' }}>
-                                    近くの店舗
+                                    {showClosedOnly ? '閉業・臨時休業の店舗' : '近くの店舗'}
                                 </Typography>
                                 <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', width: '100%' }}>
                                     {sortedPlaces.map((place) => (
