@@ -16,6 +16,7 @@ Enterprise 更新ジョブとは別の利用カウンタ・予算で、無料枠
 例:
   python update_business_status_only.py --per-run 200
   python update_business_status_only.py -n 100 --dry-run
+  python update_business_status_only.py --count-remaining
 """
 
 import argparse
@@ -86,26 +87,37 @@ def get_business_status(place_id, api_key):
     return None, last_response
 
 
-def pick_candidates(collection, run_bucket, allowed_calls, stale_days):
-    now = utc_now()
-    stale_threshold = now - timedelta(days=stale_days)
-    common_eligibility = {
+def _eligibility_filters(now):
+    return {
         "$or": [
             {"refreshMeta.nextEligibleAt": {"$lte": now}},
             {"refreshMeta.nextEligibleAt": {"$exists": False}},
         ]
     }
-    bucket_filter = {
+
+
+def _bucket_filter(run_bucket):
+    if run_bucket is None:
+        return None
+    return {
         "$or": [
             {"refreshMeta.refreshBucket": run_bucket},
             {"refreshMeta.refreshBucket": {"$exists": False}},
         ]
     }
 
+
+def _candidate_queries(now, stale_days, run_bucket=None):
+    """更新候補クエリ。run_bucket=None なら全バケット対象。"""
+    stale_threshold = now - timedelta(days=stale_days)
+    parts = [_eligibility_filters(now)]
+    bucket = _bucket_filter(run_bucket)
+    if bucket is not None:
+        parts.append(bucket)
+
     query_missing = {
         "$and": [
-            common_eligibility,
-            bucket_filter,
+            *parts,
             {
                 "$or": [
                     {"businessStatus": {"$exists": False}},
@@ -113,12 +125,13 @@ def pick_candidates(collection, run_bucket, allowed_calls, stale_days):
                     {"businessStatus": ""},
                 ]
             },
+            # import stub は API できないので残件数からも除外
+            {"id": {"$not": {"$regex": "^import-"}}},
         ]
     }
     query_stale = {
         "$and": [
-            common_eligibility,
-            bucket_filter,
+            *parts,
             {"businessStatus": {"$ne": "CLOSED_PERMANENTLY"}},
             {"refreshMeta.placeIdInvalid": {"$ne": True}},
             {
@@ -127,8 +140,15 @@ def pick_candidates(collection, run_bucket, allowed_calls, stale_days):
                     {"refreshMeta.businessStatusSyncedAt": {"$lt": stale_threshold}},
                 ]
             },
+            {"id": {"$not": {"$regex": "^import-"}}},
         ]
     }
+    return query_missing, query_stale
+
+
+def pick_candidates(collection, run_bucket, allowed_calls, stale_days):
+    now = utc_now()
+    query_missing, query_stale = _candidate_queries(now, stale_days, run_bucket=run_bucket)
 
     picked = []
     seen = set()
@@ -142,6 +162,119 @@ def pick_candidates(collection, run_bucket, allowed_calls, stale_days):
             if len(picked) >= allowed_calls:
                 return picked
     return picked
+
+
+def count_remaining_entries(stale_days=None):
+    """更新すべき残件数を集計（API は呼ばない）。バケット進行も進めない。"""
+    client = MongoClient(os.environ["MONGODB_ADDRESS"])
+    db = client.places
+    collection = db.place_info
+    state_collection = db.refresh_state
+
+    try:
+        now = utc_now()
+        stale_days = (
+            stale_days
+            if stale_days is not None
+            else get_env_int("BUSINESS_STATUS_STALE_DAYS", 30)
+        )
+        bucket_count = get_bucket_count()
+        state = state_collection.find_one({"jobName": JOB_NAME})
+        last_bucket = state.get("lastBucket") if state else None
+        # 次回実行で使われるバケット（get_next_bucket 相当の peek）
+        next_bucket = 0 if last_bucket is None else (int(last_bucket) + 1) % bucket_count
+
+        query_missing_all, query_stale_all = _candidate_queries(
+            now, stale_days, run_bucket=None
+        )
+        missing_ids = set(collection.distinct("_id", query_missing_all))
+        stale_ids = set(collection.distinct("_id", query_stale_all))
+        remaining_ids = missing_ids | stale_ids
+
+        query_missing_next, query_stale_next = _candidate_queries(
+            now, stale_days, run_bucket=next_bucket
+        )
+        missing_next = set(collection.distinct("_id", query_missing_next))
+        stale_next = set(collection.distinct("_id", query_stale_next))
+        remaining_next = missing_next | stale_next
+
+        # クールダウン中のため今は対象外だが、同期が古い／未設定のもの
+        stale_threshold = now - timedelta(days=stale_days)
+        cooldown_blocked = collection.count_documents(
+            {
+                "$and": [
+                    {"refreshMeta.nextEligibleAt": {"$gt": now}},
+                    {"id": {"$not": {"$regex": "^import-"}}},
+                    {
+                        "$or": [
+                            {"businessStatus": {"$exists": False}},
+                            {"businessStatus": None},
+                            {"businessStatus": ""},
+                            {
+                                "$and": [
+                                    {"businessStatus": {"$ne": "CLOSED_PERMANENTLY"}},
+                                    {"refreshMeta.placeIdInvalid": {"$ne": True}},
+                                    {
+                                        "$or": [
+                                            {
+                                                "refreshMeta.businessStatusSyncedAt": {
+                                                    "$exists": False
+                                                }
+                                            },
+                                            {
+                                                "refreshMeta.businessStatusSyncedAt": {
+                                                    "$lt": stale_threshold
+                                                }
+                                            },
+                                        ]
+                                    },
+                                ]
+                            },
+                        ]
+                    },
+                ]
+            }
+        )
+
+        total_places = collection.count_documents(
+            {"id": {"$not": {"$regex": "^import-"}}}
+        )
+        permanently_closed = collection.count_documents(
+            {"businessStatus": "CLOSED_PERMANENTLY"}
+        )
+        place_id_invalid = collection.count_documents(
+            {"refreshMeta.placeIdInvalid": True}
+        )
+
+        print("=== Remaining update candidates (Pro / businessStatus only) ===")
+        print(f"stale_days={stale_days}")
+        print(f"bucket_count={bucket_count} last_bucket={last_bucket} next_bucket={next_bucket}")
+        print(f"total places (excl. import stubs): {total_places}")
+        print(f"CLOSED_PERMANENTLY: {permanently_closed}")
+        print(f"placeIdInvalid: {place_id_invalid}")
+        print("---")
+        print(f"remaining (all buckets, eligible now): {len(remaining_ids)}")
+        print(f"  - missing businessStatus: {len(missing_ids)}")
+        print(f"  - stale (incl. overlap with missing): {len(stale_ids)}")
+        print(f"  - unique remaining: {len(remaining_ids)}")
+        print(f"remaining in next bucket ({next_bucket}): {len(remaining_next)}")
+        print(f"cooldown-blocked (would be candidates after cooldown): {cooldown_blocked}")
+        print("---")
+        print(
+            "残件数の定義: クールダウン明けかつ "
+            "(businessStatus 欠落) または "
+            "(永久閉業/ID無効以外で businessStatusSyncedAt が無い／stale_days 超)"
+        )
+        return {
+            "remaining_all": len(remaining_ids),
+            "remaining_next_bucket": len(remaining_next),
+            "missing": len(missing_ids),
+            "stale": len(stale_ids),
+            "cooldown_blocked": cooldown_blocked,
+            "next_bucket": next_bucket,
+        }
+    finally:
+        client.close()
 
 
 def update_business_status_only(per_run=None, dry_run=None):
@@ -359,10 +492,18 @@ if __name__ == "__main__":
         action="store_true",
         help="API を呼ばず候補だけ表示",
     )
+    parser.add_argument(
+        "--count-remaining",
+        action="store_true",
+        help="更新すべき残件数を集計して終了（API・バケット進行なし）",
+    )
     args = parser.parse_args()
     if args.per_run is not None and args.per_run < 0:
         parser.error("--per-run must be >= 0")
 
-    print("businessStatus のみの更新を開始します...")
-    update_business_status_only(per_run=args.per_run, dry_run=True if args.dry_run else None)
-    print("処理が完了しました")
+    if args.count_remaining:
+        count_remaining_entries()
+    else:
+        print("businessStatus のみの更新を開始します...")
+        update_business_status_only(per_run=args.per_run, dry_run=True if args.dry_run else None)
+        print("処理が完了しました")

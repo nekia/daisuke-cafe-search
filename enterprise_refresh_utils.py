@@ -29,10 +29,27 @@ def get_day_key(dt):
 
 
 def get_budget_limits():
+    """opening_hours 等向け（日次上限あり）。"""
     return {
         "monthly": get_env_int("MONTHLY_ENTERPRISE_CALL_BUDGET", 1000),
         "daily": get_env_int("DAILY_ENTERPRISE_CALL_BUDGET", 80),
         "per_run": get_env_int("PER_RUN_MAX_CALLS", 50),
+    }
+
+
+def get_enterprise_budget_limits():
+    """Enterprise(+Atmosphere) 向け。無料枠(約1000/月)を超えないようハードキャップ付き。
+
+    日次上限は設けない（月次・ハードキャップ・1実行上限のみ）。Pro 版と同仕様。
+    """
+    hard_cap = max(get_env_int("ENTERPRISE_HARD_MONTHLY_CAP", 1000), 0)
+    monthly = get_env_int("MONTHLY_ENTERPRISE_CALL_BUDGET", 1000)
+    if hard_cap > 0:
+        monthly = min(monthly, hard_cap)
+    return {
+        "monthly": monthly,
+        "per_run": get_env_int("PER_RUN_MAX_CALLS", 50),
+        "hard_monthly_cap": hard_cap,
     }
 
 
@@ -112,6 +129,7 @@ def increment_usage(usage_collection, scope, key, amount=1):
 
 
 def compute_remaining_budget(usage_collection, now):
+    """日次上限あり（update_opening_hours.py 向け）。"""
     limits = get_budget_limits()
     monthly_used = get_usage_count(usage_collection, "month", get_month_key(now))
     daily_used = get_usage_count(usage_collection, "day", get_day_key(now))
@@ -126,6 +144,36 @@ def compute_remaining_budget(usage_collection, now):
         "daily_remaining": daily_remaining,
         "allowed_calls_this_run": allowed,
     }
+
+
+def compute_remaining_enterprise_budget(usage_collection, now, per_run_override=None):
+    """Enterprise(+Atmosphere) 無料枠超過防止。日次制限なし（Pro 版と同仕様）。
+
+    月次カウンタ scope=month は opening_hours と共有。
+    per_run_override: 1実行あたり上限を上書き（CLI --per-run 用）。
+    """
+    limits = get_enterprise_budget_limits()
+    if per_run_override is not None:
+        limits = {**limits, "per_run": max(int(per_run_override), 0)}
+    monthly_used = get_usage_count(usage_collection, "month", get_month_key(now))
+    hard_cap = limits.get("hard_monthly_cap") or 0
+    effective_monthly_limit = limits["monthly"]
+    if hard_cap > 0:
+        effective_monthly_limit = min(effective_monthly_limit, hard_cap)
+        monthly_remaining = max(effective_monthly_limit - monthly_used, 0)
+    else:
+        monthly_remaining = max(effective_monthly_limit - monthly_used, 0)
+    allowed = min(monthly_remaining, limits["per_run"])
+    return {
+        "limits": {**limits, "monthly": effective_monthly_limit},
+        "monthly_used": monthly_used,
+        "monthly_remaining": monthly_remaining,
+        "allowed_calls_this_run": allowed,
+    }
+
+
+def increment_enterprise_usage(usage_collection, now, amount=1):
+    increment_usage(usage_collection, "month", get_month_key(now), amount)
 
 
 def compute_remaining_pro_budget(usage_collection, now, per_run_override=None):

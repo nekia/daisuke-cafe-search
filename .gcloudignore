@@ -1,0 +1,19 @@
+# Cloud Build upload ignore (do not rely on root .gitignore alone:
+# root .gitignore has `*.json` which would exclude backend/package.json)
+
+.git/
+.gitignore
+.gcloudignore
+venv/
+**/node_modules/
+**/build/
+**/.env
+**/.env.*
+!**/.env.example
+place-map-app/
+infra/
+*.csv
+*.jsonl
+closed_businesses*
+agent-transcripts/
+.cursor/

@@ -548,7 +548,7 @@ const App = () => {
                                 size="small"
                                 value={keywordInput}
                                 onChange={(event) => setKeywordInput(event.target.value)}
-                                placeholder={isNarrow ? 'キーワード' : '店名/住所/タイプで検索'}
+                                placeholder={isNarrow ? '検索' : '店名 / タイプ / 要約で検索'}
                                 sx={{
                                     minWidth: { xs: 140, sm: 220 },
                                     flex: { xs: '1 1 180px', sm: '0 1 280px' },

@@ -35,27 +35,38 @@ BASE_FIELD_MASK = ",".join(
 )
 
 
+def _localized_text(value):
+    """Places API の文字列 or LocalizedText / 入れ子 text をフラットな str にする。"""
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        inner = value.get("text")
+        if isinstance(inner, str):
+            return inner.strip() or None
+        if isinstance(inner, dict):
+            nested = inner.get("text")
+            if isinstance(nested, str):
+                return nested.strip() or None
+    return None
+
+
 def build_searchable_texts(payload, record):
     values = [
         (record.get("location_name") or {}).get("text"),
         record.get("alias"),
-        record.get("address"),
-        record.get("formattedAddress"),
-        (record.get("primary_type") or {}).get("text"),
-        record.get("primary_type_api"),
-        payload.get("displayName", {}).get("text"),
-        payload.get("formattedAddress"),
-        payload.get("primaryTypeDisplayName", {}).get("text"),
-        payload.get("primaryType"),
-        payload.get("generativeSummary", {}).get("description", {}).get("text"),
-        payload.get("reviewSummary", {}).get("text"),
+        _localized_text(payload.get("displayName")),
+        _localized_text(payload.get("primaryTypeDisplayName")),
+        _localized_text(
+            (payload.get("generativeSummary") or {}).get("description")
+        ),
+        _localized_text((payload.get("reviewSummary") or {}).get("text")),
+        _localized_text(payload.get("reviewSummary")),
     ]
     unique = []
     for value in values:
-        if isinstance(value, str):
-            text = value.strip()
-            if text and text not in unique:
-                unique.append(text)
+        text = value.strip() if isinstance(value, str) else None
+        if text and text not in unique:
+            unique.append(text)
     return unique
 
 

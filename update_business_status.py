@@ -1,3 +1,25 @@
+"""
+Enterprise(+Atmosphere) で businessStatus ほかを更新する。
+
+日次上限なし・月次ハードキャップ・1実行上限は update_business_status_only.py と同仕様。
+月次カウンタ (scope=month) は update_opening_hours.py と共有。
+
+環境変数（任意）:
+  MONTHLY_ENTERPRISE_CALL_BUDGET  既定 1000
+  ENTERPRISE_HARD_MONTHLY_CAP     既定 1000（これ以上は設定しても呼ばない）
+  PER_RUN_MAX_CALLS               既定 50（CLI --per-run で上書き可）
+  BUSINESS_STATUS_STALE_DAYS      既定 30
+  ENTERPRISE_COOLDOWN_HOURS       既定 72
+  ENTERPRISE_FAILURE_COOLDOWN_HOURS 既定 24
+  ENTERPRISE_DRY_RUN=1            API を呼ばず候補だけ表示
+
+例:
+  python update_business_status.py --per-run 200
+  python update_business_status.py -n 100 --dry-run
+  python update_business_status.py --count-remaining
+"""
+
+import argparse
 import json
 import os
 import time
@@ -8,19 +30,19 @@ from dotenv import load_dotenv
 from pymongo import MongoClient
 
 from enterprise_refresh_utils import (
-    compute_remaining_budget,
+    compute_remaining_enterprise_budget,
     ensure_refresh_meta_base,
     get_bucket_count,
-    get_day_key,
-    get_month_key,
     get_next_bucket,
     get_env_int,
-    increment_usage,
+    increment_enterprise_usage,
     next_eligible_at,
     utc_now,
 )
 
 load_dotenv()
+
+JOB_NAME = "business_status_refresh"
 
 BASE_FIELD_MASK = ",".join(
     [
@@ -36,27 +58,38 @@ BASE_FIELD_MASK = ",".join(
 )
 
 
+def _localized_text(value):
+    """Places API の文字列 or LocalizedText / 入れ子 text をフラットな str にする。"""
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        inner = value.get("text")
+        if isinstance(inner, str):
+            return inner.strip() or None
+        if isinstance(inner, dict):
+            nested = inner.get("text")
+            if isinstance(nested, str):
+                return nested.strip() or None
+    return None
+
+
 def build_searchable_texts(payload, record):
     values = [
         (record.get("location_name") or {}).get("text"),
         record.get("alias"),
-        record.get("address"),
-        record.get("formattedAddress"),
-        (record.get("primary_type") or {}).get("text"),
-        record.get("primary_type_api"),
-        payload.get("displayName", {}).get("text"),
-        payload.get("formattedAddress"),
-        payload.get("primaryTypeDisplayName", {}).get("text"),
-        payload.get("primaryType"),
-        payload.get("generativeSummary", {}).get("description", {}).get("text"),
-        payload.get("reviewSummary", {}).get("text"),
+        _localized_text(payload.get("displayName")),
+        _localized_text(payload.get("primaryTypeDisplayName")),
+        _localized_text(
+            (payload.get("generativeSummary") or {}).get("description")
+        ),
+        _localized_text((payload.get("reviewSummary") or {}).get("text")),
+        _localized_text(payload.get("reviewSummary")),
     ]
     unique = []
     for value in values:
-        if isinstance(value, str):
-            text = value.strip()
-            if text and text not in unique:
-                unique.append(text)
+        text = value.strip() if isinstance(value, str) else None
+        if text and text not in unique:
+            unique.append(text)
     return unique
 
 
@@ -99,38 +132,49 @@ def get_place_payload(place_id, api_key):
     return None
 
 
-def pick_candidates(collection, run_bucket, allowed_calls, stale_days):
-    now = utc_now()
-    stale_threshold = now - timedelta(days=stale_days)
-    common_eligibility = {
+def _eligibility_filters(now):
+    return {
         "$or": [
             {"refreshMeta.nextEligibleAt": {"$lte": now}},
             {"refreshMeta.nextEligibleAt": {"$exists": False}},
         ]
     }
-    bucket_filter = {
+
+
+def _bucket_filter(run_bucket):
+    if run_bucket is None:
+        return None
+    return {
         "$or": [
             {"refreshMeta.refreshBucket": run_bucket},
             {"refreshMeta.refreshBucket": {"$exists": False}},
         ]
     }
 
+
+def _candidate_queries(now, stale_days, run_bucket=None):
+    """更新候補クエリ。run_bucket=None なら全バケット対象。"""
+    stale_threshold = now - timedelta(days=stale_days)
+    parts = [_eligibility_filters(now)]
+    bucket = _bucket_filter(run_bucket)
+    if bucket is not None:
+        parts.append(bucket)
+
     query_missing = {
         "$and": [
-            common_eligibility,
-            bucket_filter,
+            *parts,
             {
                 "$or": [
                     {"businessStatus": {"$exists": False}},
                     {"businessStatus": None},
                 ]
             },
+            {"id": {"$not": {"$regex": "^import-"}}},
         ]
     }
     query_stale = {
         "$and": [
-            common_eligibility,
-            bucket_filter,
+            *parts,
             {"businessStatus": {"$ne": "CLOSED_PERMANENTLY"}},
             {
                 "$or": [
@@ -138,8 +182,15 @@ def pick_candidates(collection, run_bucket, allowed_calls, stale_days):
                     {"refreshMeta.businessStatusSyncedAt": {"$lt": stale_threshold}},
                 ]
             },
+            {"id": {"$not": {"$regex": "^import-"}}},
         ]
     }
+    return query_missing, query_stale
+
+
+def pick_candidates(collection, run_bucket, allowed_calls, stale_days):
+    now = utc_now()
+    query_missing, query_stale = _candidate_queries(now, stale_days, run_bucket=run_bucket)
 
     picked = []
     seen = set()
@@ -155,52 +206,190 @@ def pick_candidates(collection, run_bucket, allowed_calls, stale_days):
     return picked
 
 
-def update_closed_business_status():
+def count_remaining_entries(stale_days=None):
+    """更新すべき残件数を集計（API は呼ばない）。バケット進行も進めない。"""
+    client = MongoClient(os.environ["MONGODB_ADDRESS"])
+    db = client.places
+    collection = db.place_info
+    state_collection = db.refresh_state
+
+    try:
+        now = utc_now()
+        stale_days = (
+            stale_days
+            if stale_days is not None
+            else get_env_int("BUSINESS_STATUS_STALE_DAYS", 30)
+        )
+        bucket_count = get_bucket_count()
+        state = state_collection.find_one({"jobName": JOB_NAME})
+        last_bucket = state.get("lastBucket") if state else None
+        next_bucket = 0 if last_bucket is None else (int(last_bucket) + 1) % bucket_count
+
+        query_missing_all, query_stale_all = _candidate_queries(
+            now, stale_days, run_bucket=None
+        )
+        missing_ids = set(collection.distinct("_id", query_missing_all))
+        stale_ids = set(collection.distinct("_id", query_stale_all))
+        remaining_ids = missing_ids | stale_ids
+
+        query_missing_next, query_stale_next = _candidate_queries(
+            now, stale_days, run_bucket=next_bucket
+        )
+        missing_next = set(collection.distinct("_id", query_missing_next))
+        stale_next = set(collection.distinct("_id", query_stale_next))
+        remaining_next = missing_next | stale_next
+
+        stale_threshold = now - timedelta(days=stale_days)
+        cooldown_blocked = collection.count_documents(
+            {
+                "$and": [
+                    {"refreshMeta.nextEligibleAt": {"$gt": now}},
+                    {"id": {"$not": {"$regex": "^import-"}}},
+                    {
+                        "$or": [
+                            {"businessStatus": {"$exists": False}},
+                            {"businessStatus": None},
+                            {
+                                "$and": [
+                                    {"businessStatus": {"$ne": "CLOSED_PERMANENTLY"}},
+                                    {
+                                        "$or": [
+                                            {
+                                                "refreshMeta.businessStatusSyncedAt": {
+                                                    "$exists": False
+                                                }
+                                            },
+                                            {
+                                                "refreshMeta.businessStatusSyncedAt": {
+                                                    "$lt": stale_threshold
+                                                }
+                                            },
+                                        ]
+                                    },
+                                ]
+                            },
+                        ]
+                    },
+                ]
+            }
+        )
+
+        total_places = collection.count_documents(
+            {"id": {"$not": {"$regex": "^import-"}}}
+        )
+        permanently_closed = collection.count_documents(
+            {"businessStatus": "CLOSED_PERMANENTLY"}
+        )
+        with_snapshot = collection.count_documents(
+            {"enterpriseData.latestSnapshot": {"$exists": True}}
+        )
+
+        print("=== Remaining update candidates (Enterprise+Atmosphere) ===")
+        print(f"stale_days={stale_days}")
+        print(
+            f"bucket_count={bucket_count} last_bucket={last_bucket} "
+            f"next_bucket={next_bucket}"
+        )
+        print(f"total places (excl. import stubs): {total_places}")
+        print(f"CLOSED_PERMANENTLY: {permanently_closed}")
+        print(f"enterpriseData.latestSnapshot exists: {with_snapshot}")
+        print("---")
+        print(f"remaining (all buckets, eligible now): {len(remaining_ids)}")
+        print(f"  - missing businessStatus: {len(missing_ids)}")
+        print(f"  - stale (incl. overlap with missing): {len(stale_ids)}")
+        print(f"  - unique remaining: {len(remaining_ids)}")
+        print(f"remaining in next bucket ({next_bucket}): {len(remaining_next)}")
+        print(
+            f"cooldown-blocked (would be candidates after cooldown): {cooldown_blocked}"
+        )
+        print("---")
+        print(
+            "残件数の定義: クールダウン明けかつ "
+            "(businessStatus 欠落) または "
+            "(永久閉業以外で businessStatusSyncedAt が無い／stale_days 超)"
+        )
+        return {
+            "remaining_all": len(remaining_ids),
+            "remaining_next_bucket": len(remaining_next),
+            "missing": len(missing_ids),
+            "stale": len(stale_ids),
+            "cooldown_blocked": cooldown_blocked,
+            "next_bucket": next_bucket,
+        }
+    finally:
+        client.close()
+
+
+def update_closed_business_status(per_run=None, dry_run=None):
     client = MongoClient(os.environ["MONGODB_ADDRESS"])
     db = client.places
     collection = db.place_info
     usage_collection = db.api_usage_counters
     state_collection = db.refresh_state
     api_key = os.environ["GOOGLE_MAPS_API_KEY"]
+    if dry_run is None:
+        dry_run = os.getenv("ENTERPRISE_DRY_RUN", "").strip() in ("1", "true", "True", "yes")
 
     closed_businesses = []
 
     try:
         now = utc_now()
-        budget = compute_remaining_budget(usage_collection, now)
+        budget = compute_remaining_enterprise_budget(
+            usage_collection, now, per_run_override=per_run
+        )
         bucket_count = get_bucket_count()
         run_bucket = get_next_bucket(state_collection, "business_status_refresh", bucket_count)
         stale_days = get_env_int("BUSINESS_STATUS_STALE_DAYS", 30)
         cooldown_hours_ok = get_env_int("ENTERPRISE_COOLDOWN_HOURS", 72)
         cooldown_hours_fail = get_env_int("ENTERPRISE_FAILURE_COOLDOWN_HOURS", 24)
 
-        print("=== Budget status ===")
+        print("=== Enterprise(+Atmosphere) budget ===")
+        print(f"dry_run={dry_run}")
         print(
             f"month used={budget['monthly_used']} remaining={budget['monthly_remaining']} "
-            f"(limit={budget['limits']['monthly']})"
+            f"(limit={budget['limits']['monthly']}, hard_cap={budget['limits'].get('hard_monthly_cap')})"
         )
+        print("day limit=disabled")
         print(
-            f"day used={budget['daily_used']} remaining={budget['daily_remaining']} "
-            f"(limit={budget['limits']['daily']})"
+            f"run allowance={budget['allowed_calls_this_run']} "
+            f"(per_run={budget['limits']['per_run']})"
         )
-        print(f"run allowance={budget['allowed_calls_this_run']}")
         print(f"run bucket={run_bucket}/{bucket_count - 1}")
 
         if budget["allowed_calls_this_run"] <= 0:
-            print("No available budget. Exit without API calls.")
+            print("No available Enterprise budget (free-tier safety). Exit without API calls.")
             return
 
-        records_to_check = pick_candidates(collection, run_bucket, budget["allowed_calls_this_run"], stale_days)
+        records_to_check = pick_candidates(
+            collection, run_bucket, budget["allowed_calls_this_run"], stale_days
+        )
         if not records_to_check:
             print("No eligible records for this bucket.")
+            return
+
+        if dry_run:
+            print(f"DRY RUN: would check {len(records_to_check)} places")
+            for record in records_to_check[:20]:
+                name = (record.get("location_name") or {}).get("text", "N/A")
+                print(f"  - {name} ({record.get('id')}) status={record.get('businessStatus')}")
+            if len(records_to_check) > 20:
+                print(f"  ... and {len(records_to_check) - 20} more")
             return
 
         updated_count = 0
         closed_count = 0
         failed_count = 0
         api_calls = 0
+        max_calls = budget["allowed_calls_this_run"]
 
         for i, record in enumerate(records_to_check, 1):
+            live_budget = compute_remaining_enterprise_budget(
+                usage_collection, utc_now(), per_run_override=per_run
+            )
+            if live_budget["monthly_remaining"] <= 0 or api_calls >= max_calls:
+                print("Enterprise budget exhausted mid-run. Stopping.")
+                break
+
             place_id = record.get("id")
             location_name = record.get("location_name", {}).get("text", "N/A")
             alias = record.get("alias", "N/A")
@@ -216,8 +405,7 @@ def update_closed_business_status():
 
             ensure_refresh_meta_base(collection, record, now)
             payload = get_place_payload(place_id, api_key)
-            increment_usage(usage_collection, "month", get_month_key(now), 1)
-            increment_usage(usage_collection, "day", get_day_key(now), 1)
+            increment_enterprise_usage(usage_collection, now, 1)
             api_calls += 1
 
             if not payload:
@@ -285,11 +473,42 @@ def update_closed_business_status():
 
     except Exception as e:
         print(f"processing failed: {str(e)}")
+        raise
     finally:
         client.close()
 
 
 if __name__ == "__main__":
-    print("business_status情報の更新を開始します...")
-    update_closed_business_status()
-    print("処理が完了しました")
+    parser = argparse.ArgumentParser(
+        description="Enterprise(+Atmosphere) で businessStatus 等を更新（無料枠安全装置付き）"
+    )
+    parser.add_argument(
+        "--per-run",
+        "-n",
+        type=int,
+        default=None,
+        metavar="N",
+        help="1実行あたりの最大 API 呼び出し数（既定: 環境変数 PER_RUN_MAX_CALLS または 50）",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="API を呼ばず候補だけ表示",
+    )
+    parser.add_argument(
+        "--count-remaining",
+        action="store_true",
+        help="更新すべき残件数を集計して終了（API・バケット進行なし）",
+    )
+    args = parser.parse_args()
+    if args.per_run is not None and args.per_run < 0:
+        parser.error("--per-run must be >= 0")
+
+    if args.count_remaining:
+        count_remaining_entries()
+    else:
+        print("business_status情報の更新を開始します...")
+        update_closed_business_status(
+            per_run=args.per_run, dry_run=True if args.dry_run else None
+        )
+        print("処理が完了しました")

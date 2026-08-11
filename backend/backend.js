@@ -170,12 +170,18 @@ app.get('/places', verifyToken, async (req, res) => {
         }
 
         const category = req.query.category;
-        if (category) {
-            if (Array.isArray(category) && category.length > 0) {
-                query['category'] = { $in: category };
-            } else if (!Array.isArray(category)) {
-                query['category'] = { $in: [category] };
-            }
+        const keyword = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+        // キーワード検索時は店名ヒットを優先し、カテゴリ絞り込みは外す
+        if (category && !keyword) {
+            const rawList = Array.isArray(category) && category.length > 0
+                ? category
+                : [category];
+            const normalized = rawList.flatMap((value) => {
+                const asString = String(value);
+                const asNumber = Number(value);
+                return Number.isNaN(asNumber) ? [asString] : [asString, asNumber];
+            });
+            query['category'] = { $in: normalized };
             console.log(query.category)
         }
 
@@ -185,31 +191,44 @@ app.get('/places', verifyToken, async (req, res) => {
             checkOpenDate = true;
         }
 
-        const keyword = typeof req.query.q === 'string' ? req.query.q.trim() : '';
         if (keyword) {
             const tokens = keyword
                 .split(/[\s\u3000]+/)
                 .map((token) => token.trim())
                 .filter(Boolean);
 
+            // 検索対象: 店名 / primaryTypeDisplayName / generativeSummary / reviewSummary
+            // 店名は「果実屋珈琲 調布…」とスペース無し入力の差を吸収するため \s* を挟む
             const tokenConditions = tokens.map((token) => {
                 const safeRegex = new RegExp(escapeRegex(token), 'i');
+                const flexibleNameRegex = new RegExp(
+                    [...token].map((ch) => escapeRegex(ch)).join('\\s*'),
+                    'i'
+                );
                 return {
                     $or: [
-                        { 'location_name.text': safeRegex },
-                        { alias: safeRegex },
-                        { address: safeRegex },
-                        { formattedAddress: safeRegex },
+                        { 'location_name.text': flexibleNameRegex },
+                        { alias: flexibleNameRegex },
+                        { 'enterpriseData.latestSnapshot.displayName.text': flexibleNameRegex },
+                        { 'enterpriseData.latestSnapshot.primaryTypeDisplayName.text': safeRegex },
                         { 'primary_type.text': safeRegex },
-                        { primary_type_api: safeRegex },
-                        { 'enterpriseData.searchableTexts': safeRegex }
-                    ]
+                        {
+                            'enterpriseData.latestSnapshot.generativeSummary.description.text':
+                                safeRegex,
+                        },
+                        // reviewSummary.text は LocalizedText（{ text, languageCode }）のことがある
+                        { 'enterpriseData.latestSnapshot.reviewSummary.text': safeRegex },
+                        { 'enterpriseData.latestSnapshot.reviewSummary.text.text': safeRegex },
+                        { 'enterpriseData.searchableTexts': flexibleNameRegex },
+                        { 'enterpriseData.searchableTexts': safeRegex },
+                    ],
                 };
             });
 
             if (tokenConditions.length > 0) {
                 andConditions.push(...tokenConditions);
             }
+            console.log('keyword search (category filter skipped):', keyword);
         }
     }
 
