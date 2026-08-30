@@ -140,4 +140,5 @@ node_modules/
 *.json
 !primary_type_text.json
 !place-map-app/src/data/primary_type_text.json
+!place-map-app/src/data/parkingmeter.json
 *.txt

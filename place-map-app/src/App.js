@@ -219,6 +219,7 @@ const App = () => {
     const [sortedPlaces, setSortedPlaces] = useState([]);
     const [position, setPosition] = useState(defaultPosition);
     const [viewMode, setViewMode] = useState('map'); // 'map' or 'list'
+    const [showParkingMeters, setShowParkingMeters] = useState(false);
     const isNarrow = useMediaQuery('(max-width:600px)');
 
     const categoryColors = {
@@ -619,6 +620,23 @@ const App = () => {
                                     '& .MuiFormControlLabel-label': { whiteSpace: 'nowrap' },
                                 }}
                             />
+                            <FormControlLabel
+                                control={
+                                    <Checkbox
+                                        checked={showParkingMeters}
+                                        onChange={(event) => setShowParkingMeters(event.target.checked)}
+                                        disabled={viewMode !== 'map'}
+                                        sx={{ p: 0.75 }}
+                                    />
+                                }
+                                label={isNarrow ? '駐車区間' : '時間制限駐車'}
+                                sx={{
+                                    marginLeft: 0,
+                                    marginRight: 0,
+                                    flexShrink: 0,
+                                    '& .MuiFormControlLabel-label': { whiteSpace: 'nowrap' },
+                                }}
+                            />
                             <LocalizationProvider dateAdapter={AdapterDateFns} locale={jaLocale}>
                                 <DateTimePicker
                                     value={selectedDateTime}
@@ -769,7 +787,36 @@ const App = () => {
                                     center={position}
                                     onCenterChange={setPosition}
                                     currentLocation={currentLocation}
+                                    showParkingMeters={showParkingMeters}
                                 />
+                                {showParkingMeters && (
+                                    <Box
+                                        sx={{
+                                            position: 'absolute',
+                                            left: 12,
+                                            bottom: 24,
+                                            zIndex: 1,
+                                            bgcolor: 'rgba(255,255,255,0.92)',
+                                            border: '1px solid #e0e0e0',
+                                            borderRadius: 1,
+                                            px: 1.25,
+                                            py: 1,
+                                            fontSize: 12,
+                                            lineHeight: 1.5,
+                                            pointerEvents: 'none',
+                                        }}
+                                    >
+                                        <Box sx={{ fontWeight: 600, mb: 0.25 }}>時間制限駐車区間</Box>
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                                            <Box sx={{ width: 18, height: 3, bgcolor: '#1565c0' }} />
+                                            パーキング・メーター
+                                        </Box>
+                                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                                            <Box sx={{ width: 18, height: 3, bgcolor: '#ef6c00' }} />
+                                            パーキング・チケット
+                                        </Box>
+                                    </Box>
+                                )}
                             </Box>
                         ) : (
                             <Paper
