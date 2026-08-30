@@ -171,8 +171,7 @@ app.get('/places', verifyToken, async (req, res) => {
 
         const category = req.query.category;
         const keyword = typeof req.query.q === 'string' ? req.query.q.trim() : '';
-        // キーワード検索時は店名ヒットを優先し、カテゴリ絞り込みは外す
-        if (category && !keyword) {
+        if (category) {
             const rawList = Array.isArray(category) && category.length > 0
                 ? category
                 : [category];
@@ -228,7 +227,7 @@ app.get('/places', verifyToken, async (req, res) => {
             if (tokenConditions.length > 0) {
                 andConditions.push(...tokenConditions);
             }
-            console.log('keyword search (category filter skipped):', keyword);
+            console.log('keyword search:', keyword);
         }
     }
 
