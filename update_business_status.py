@@ -17,6 +17,7 @@ Enterprise(+Atmosphere) で businessStatus ほかを更新する。
   python update_business_status.py --per-run 200
   python update_business_status.py -n 100 --dry-run
   python update_business_status.py --count-remaining
+  python update_business_status.py --all-buckets --per-run 500
 """
 
 import argparse
@@ -320,7 +321,7 @@ def count_remaining_entries(stale_days=None):
         client.close()
 
 
-def update_closed_business_status(per_run=None, dry_run=None):
+def update_closed_business_status(per_run=None, dry_run=None, all_buckets=False):
     client = MongoClient(os.environ["MONGODB_ADDRESS"])
     db = client.places
     collection = db.place_info
@@ -338,7 +339,12 @@ def update_closed_business_status(per_run=None, dry_run=None):
             usage_collection, now, per_run_override=per_run
         )
         bucket_count = get_bucket_count()
-        run_bucket = get_next_bucket(state_collection, "business_status_refresh", bucket_count)
+        # 通常は1バケットだけ進める。--all-buckets では全候補を対象にし、回転状態は進めない。
+        run_bucket = (
+            None
+            if all_buckets
+            else get_next_bucket(state_collection, "business_status_refresh", bucket_count)
+        )
         stale_days = get_env_int("BUSINESS_STATUS_STALE_DAYS", 30)
         cooldown_hours_ok = get_env_int("ENTERPRISE_COOLDOWN_HOURS", 72)
         cooldown_hours_fail = get_env_int("ENTERPRISE_FAILURE_COOLDOWN_HOURS", 24)
@@ -354,7 +360,10 @@ def update_closed_business_status(per_run=None, dry_run=None):
             f"run allowance={budget['allowed_calls_this_run']} "
             f"(per_run={budget['limits']['per_run']})"
         )
-        print(f"run bucket={run_bucket}/{bucket_count - 1}")
+        if all_buckets:
+            print(f"run bucket=ALL (0-{bucket_count - 1})")
+        else:
+            print(f"run bucket={run_bucket}/{bucket_count - 1}")
 
         if budget["allowed_calls_this_run"] <= 0:
             print("No available Enterprise budget (free-tier safety). Exit without API calls.")
@@ -364,7 +373,10 @@ def update_closed_business_status(per_run=None, dry_run=None):
             collection, run_bucket, budget["allowed_calls_this_run"], stale_days
         )
         if not records_to_check:
-            print("No eligible records for this bucket.")
+            if all_buckets:
+                print("No eligible records across all buckets.")
+            else:
+                print("No eligible records for this bucket.")
             return
 
         if dry_run:
@@ -500,6 +512,11 @@ if __name__ == "__main__":
         action="store_true",
         help="更新すべき残件数を集計して終了（API・バケット進行なし）",
     )
+    parser.add_argument(
+        "--all-buckets",
+        action="store_true",
+        help="バケット分割を無視し、全バケットの更新候補を1実行で処理（月次枠・--per-run は有効）",
+    )
     args = parser.parse_args()
     if args.per_run is not None and args.per_run < 0:
         parser.error("--per-run must be >= 0")
@@ -509,6 +526,8 @@ if __name__ == "__main__":
     else:
         print("business_status情報の更新を開始します...")
         update_closed_business_status(
-            per_run=args.per_run, dry_run=True if args.dry_run else None
+            per_run=args.per_run,
+            dry_run=True if args.dry_run else None,
+            all_buckets=args.all_buckets,
         )
         print("処理が完了しました")
